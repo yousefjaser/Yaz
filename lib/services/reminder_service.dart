@@ -4,9 +4,14 @@ import 'package:yaz/services/whatsapp_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:yaz/main.dart';
 import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../models/reminder.dart';
 
 class ReminderService {
   static const String reminderTask = 'payment_reminder';
+  final SupabaseClient _supabase;
+
+  ReminderService(this._supabase);
 
   Future<void> initialize() async {
     debugPrint('تهيئة خدمة التذكير...');
@@ -33,6 +38,16 @@ class ReminderService {
       final localReminderDate = reminderDate.toLocal();
       debugPrint(
           'جدولة تذكير للدفعة: $paymentId في تاريخ: ${_formatDateTime(localReminderDate)}');
+
+      // إنشاء تذكير جديد في قاعدة البيانات
+      final reminder = Reminder(
+        customerId: paymentId, // تأكد من أن هذا هو معرف العميل الصحيح
+        reminderDate: localReminderDate,
+        message: 'تذكير بموعد الدفعة', // يمكنك تخصيص الرسالة حسب احتياجك
+      );
+
+      // حفظ التذكير في Supabase
+      await createReminder(reminder);
 
       // إلغاء أي تذكير سابق لنفس الدفعة
       await Workmanager().cancelByUniqueName(uniqueId);
@@ -113,6 +128,46 @@ class ReminderService {
     } catch (e) {
       debugPrint('خطأ في إلغاء التذكير: $e');
       rethrow;
+    }
+  }
+
+  Future<void> createReminder(Reminder reminder) async {
+    try {
+      await _supabase.from('reminders').insert(reminder.toJson());
+    } catch (e) {
+      throw Exception('فشل في إنشاء التذكير: $e');
+    }
+  }
+
+  Future<List<Reminder>> getCustomerReminders(String customerId) async {
+    try {
+      final response = await _supabase
+          .from('reminders')
+          .select()
+          .eq('customer_id', customerId)
+          .order('reminder_date');
+
+      return (response as List).map((data) => Reminder.fromJson(data)).toList();
+    } catch (e) {
+      throw Exception('فشل في جلب التذكيرات: $e');
+    }
+  }
+
+  Future<void> markReminderAsCompleted(String reminderId) async {
+    try {
+      await _supabase
+          .from('reminders')
+          .update({'is_completed': true}).eq('id', reminderId);
+    } catch (e) {
+      throw Exception('فشل في تحديث حالة التذكير: $e');
+    }
+  }
+
+  Future<void> deleteReminder(String reminderId) async {
+    try {
+      await _supabase.from('reminders').delete().eq('id', reminderId);
+    } catch (e) {
+      throw Exception('فشل في حذف التذكير: $e');
     }
   }
 }

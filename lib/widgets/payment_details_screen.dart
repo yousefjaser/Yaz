@@ -7,14 +7,19 @@ import 'package:intl/intl.dart' hide TextDirection;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_icon_snackbar/flutter_icon_snackbar.dart';
+import 'package:yaz/services/reminder_service.dart';
+import 'package:yaz/models/reminder.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class ScheduledReminder {
+  final String id;
   final DateTime scheduleDate;
   bool isSent;
   bool hasError;
   String? customMessage;
 
   ScheduledReminder({
+    required this.id,
     required this.scheduleDate,
     this.isSent = false,
     this.hasError = false,
@@ -43,7 +48,8 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
   Timer? _updateTimer;
   bool _isLoading = false;
   final _reminderKey = 'reminders';
-  final TextEditingController _customMessageController = TextEditingController();
+  final TextEditingController _customMessageController =
+      TextEditingController();
   int _selectedMessageType = 0;
   final FocusNode _focusNode = FocusNode();
 
@@ -99,7 +105,8 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
     super.dispose();
   }
 
-  void _showVariablesList(BuildContext context, TextEditingController controller) {
+  void _showVariablesList(
+      BuildContext context, TextEditingController controller) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -121,7 +128,9 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                   final afterCursor = text.substring(selection.baseOffset);
                   final lastAtIndex = beforeCursor.lastIndexOf('@');
                   if (lastAtIndex != -1) {
-                    final newText = beforeCursor.substring(0, lastAtIndex) + '@$variable' + afterCursor;
+                    final newText = beforeCursor.substring(0, lastAtIndex) +
+                        '@$variable' +
+                        afterCursor;
                     controller.text = newText;
                     controller.selection = TextSelection.fromPosition(
                       TextPosition(offset: lastAtIndex + variable.length + 1),
@@ -132,8 +141,8 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                 title: Text(
                   '@$variable',
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
                 ),
                 subtitle: Text(
                   _getVariableDescription(variable),
@@ -175,7 +184,8 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
       bool needsSave = false;
       for (int i = 0; i < _scheduledReminders.length; i++) {
         var reminder = _scheduledReminders[i];
-        if (!reminder.isSent && reminder.scheduleDate.isBefore(DateTime.now())) {
+        if (!reminder.isSent &&
+            reminder.scheduleDate.isBefore(DateTime.now())) {
           try {
             final success = await _whatsAppService.schedulePaymentReminder(
               phoneNumber: widget.customer.phone,
@@ -186,9 +196,16 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
               customMessage: reminder.customMessage,
             );
 
+            if (success) {
+              // تحديث حالة التذكير في Supabase
+              final reminderService = ReminderService(Supabase.instance.client);
+              await reminderService.markReminderAsCompleted(reminder.id);
+            }
+
             if (mounted) {
               setState(() {
                 _scheduledReminders[i] = ScheduledReminder(
+                  id: reminder.id,
                   scheduleDate: reminder.scheduleDate,
                   isSent: true,
                   hasError: !success,
@@ -201,7 +218,8 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                 context: context,
                 icon: success ? Icons.check : Icons.error,
                 color: success ? Colors.green : Colors.red,
-                label: success ? 'تم إرسال التذكير بنجاح' : 'فشل في إرسال التذكير',
+                label:
+                    success ? 'تم إرسال التذكير بنجاح' : 'فشل في إرسال التذكير',
               );
             }
           } catch (e) {
@@ -209,6 +227,7 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
             if (mounted) {
               setState(() {
                 _scheduledReminders[i] = ScheduledReminder(
+                  id: reminder.id,
                   scheduleDate: reminder.scheduleDate,
                   isSent: true,
                   hasError: true,
@@ -241,23 +260,27 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
   Future<void> _loadScheduledReminders() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final remindersJson = prefs.getStringList('${_reminderKey}_${widget.payment.id}') ?? [];
+      final remindersJson =
+          prefs.getStringList('${_reminderKey}_${widget.payment.id}') ?? [];
       setState(() {
         _scheduledReminders = remindersJson.map((json) {
           final parts = json.split(':');
-          final scheduleDate = DateTime.fromMillisecondsSinceEpoch(int.parse(parts[0]));
+          final scheduleDate =
+              DateTime.fromMillisecondsSinceEpoch(int.parse(parts[0]));
           final isSent = parts.length > 1 ? parts[1] == '1' : false;
           final hasError = parts.length > 2 ? parts[2] == '1' : false;
           final customMessage = parts.length > 3 ? parts[3] : null;
-          
+
           return ScheduledReminder(
+            id: parts[0],
             scheduleDate: scheduleDate,
             isSent: isSent,
             hasError: hasError,
             customMessage: customMessage,
           );
         }).toList();
-        _scheduledReminders.sort((a, b) => a.scheduleDate.compareTo(b.scheduleDate));
+        _scheduledReminders
+            .sort((a, b) => a.scheduleDate.compareTo(b.scheduleDate));
       });
     } catch (e) {
       debugPrint('خطأ في تحميل التذكيرات: $e');
@@ -273,7 +296,8 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
             '${reminder.hasError ? '1' : '0'}:'
             '${reminder.customMessage ?? ''}';
       }).toList();
-      await prefs.setStringList('${_reminderKey}_${widget.payment.id}', remindersJson);
+      await prefs.setStringList(
+          '${_reminderKey}_${widget.payment.id}', remindersJson);
     } catch (e) {
       debugPrint('خطأ في حفظ التذكيرات: $e');
     }
@@ -281,26 +305,47 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
 
   Future<void> _scheduleReminder(DateTime scheduleDate) async {
     try {
-      final reminder = ScheduledReminder(
-        scheduleDate: scheduleDate,
-        isSent: false,
-        hasError: false,
-        customMessage: _selectedMessageType == 3 ? _customMessageController.text : null,
+      if (widget.customer.id == null) {
+        throw Exception('معرف العميل غير موجود');
+      }
+
+      // إنشاء كائن التذكير
+      final reminder = Reminder(
+        customerId: widget.customer.id!,
+        reminderDate: scheduleDate,
+        message: _selectedMessageType == 3
+            ? _customMessageController.text
+            : _getMessageTemplate(_selectedMessageType),
       );
 
+      // حفظ التذكير في Supabase
+      final reminderService = ReminderService(Supabase.instance.client);
+      await reminderService.createReminder(reminder);
+
+      // إضافة التذكير إلى القائمة المحلية
       setState(() {
-        _scheduledReminders.add(reminder);
-        _scheduledReminders.sort((a, b) => a.scheduleDate.compareTo(b.scheduleDate));
+        _scheduledReminders.add(ScheduledReminder(
+          id: reminder.id,
+          scheduleDate: scheduleDate,
+          isSent: false,
+          hasError: false,
+          customMessage:
+              _selectedMessageType == 3 ? _customMessageController.text : null,
+        ));
+        _scheduledReminders
+            .sort((a, b) => a.scheduleDate.compareTo(b.scheduleDate));
       });
-      
+
       await _saveReminders();
 
-      showIconSnackBar(
-        context: context,
-        icon: Icons.check,
-        color: Colors.green,
-        label: 'تمت جدولة التذكير بنجاح',
-      );
+      if (mounted) {
+        showIconSnackBar(
+          context: context,
+          icon: Icons.check,
+          color: Colors.green,
+          label: 'تمت جدولة التذكير بنجاح',
+        );
+      }
     } catch (e) {
       debugPrint('خطأ في جدولة التذكير: $e');
       if (mounted) {
@@ -316,26 +361,36 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
 
   Future<void> _deleteReminder(int index) async {
     try {
+      final reminder = _scheduledReminders[index];
+
+      // حذف التذكير من Supabase
+      final reminderService = ReminderService(Supabase.instance.client);
+      await reminderService.deleteReminder(reminder.id);
+
       setState(() {
         _scheduledReminders.removeAt(index);
       });
 
       await _saveReminders();
 
-      showIconSnackBar(
-        context: context,
-        icon: Icons.check,
-        color: Colors.green,
-        label: 'تم حذف التذكير بنجاح',
-      );
+      if (mounted) {
+        showIconSnackBar(
+          context: context,
+          icon: Icons.check,
+          color: Colors.green,
+          label: 'تم حذف التذكير بنجاح',
+        );
+      }
     } catch (e) {
       debugPrint('خطأ في حذف التذكير: $e');
-      showIconSnackBar(
-        context: context,
-        icon: Icons.error,
-        color: Colors.red,
-        label: 'حدث خطأ: $e',
-      );
+      if (mounted) {
+        showIconSnackBar(
+          context: context,
+          icon: Icons.error,
+          color: Colors.red,
+          label: 'حدث خطأ: $e',
+        );
+      }
     }
   }
 
@@ -366,18 +421,18 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
     final paymentType = widget.payment.amount >= 0 ? 'دفعة' : 'دين';
 
     return text
-      .replaceAll('@الاسم', widget.customer.name)
-      .replaceAll('@الرقم', widget.customer.phone)
-      .replaceAll('@المبلغ', amount)
-      .replaceAll('@التاريخ', date)
-      .replaceAll('@النوع', paymentType);
+        .replaceAll('@الاسم', widget.customer.name)
+        .replaceAll('@الرقم', widget.customer.phone)
+        .replaceAll('@المبلغ', amount)
+        .replaceAll('@التاريخ', date)
+        .replaceAll('@النوع', paymentType);
   }
 
   String _getMessageTemplate(int type) {
     final amount = '${widget.payment.amount.abs()} ₪';
     final date = _formatDate(widget.payment.date);
     final paymentType = widget.payment.amount >= 0 ? 'دفعة' : 'دين';
-    
+
     switch (type) {
       case 0:
         return 'السلام عليكم ${widget.customer.name}،\nنود تذكيركم بموعد استحقاق $paymentType بقيمة $amount في تاريخ $date\nشكراً لتعاونكم';
@@ -438,13 +493,18 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
                               color: _selectedMessageType == i
-                                  ? Theme.of(context).colorScheme.primaryContainer
+                                  ? Theme.of(context)
+                                      .colorScheme
+                                      .primaryContainer
                                   : Theme.of(context).colorScheme.surface,
                               borderRadius: BorderRadius.circular(12),
                               border: Border.all(
                                 color: _selectedMessageType == i
                                     ? Theme.of(context).colorScheme.primary
-                                    : Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                                    : Theme.of(context)
+                                        .colorScheme
+                                        .outline
+                                        .withOpacity(0.2),
                               ),
                             ),
                             child: Column(
@@ -453,19 +513,32 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                               children: [
                                 Text(
                                   'نموذج ${i + 1}',
-                                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    color: _selectedMessageType == i
-                                        ? Theme.of(context).colorScheme.primary
-                                        : Theme.of(context).colorScheme.onSurface,
-                                  ),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleMedium
+                                      ?.copyWith(
+                                        color: _selectedMessageType == i
+                                            ? Theme.of(context)
+                                                .colorScheme
+                                                .primary
+                                            : Theme.of(context)
+                                                .colorScheme
+                                                .onSurface,
+                                      ),
                                 ),
                                 const SizedBox(height: 8),
                                 Expanded(
                                   child: Text(
                                     _getMessageTemplate(i),
-                                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.8),
-                                    ),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withOpacity(0.8),
+                                        ),
                                     maxLines: 6,
                                     overflow: TextOverflow.ellipsis,
                                   ),
@@ -495,7 +568,10 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                             border: Border.all(
                               color: _selectedMessageType == 3
                                   ? Theme.of(context).colorScheme.primary
-                                  : Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                                  : Theme.of(context)
+                                      .colorScheme
+                                      .outline
+                                      .withOpacity(0.2),
                             ),
                           ),
                           child: Column(
@@ -511,11 +587,18 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                               const SizedBox(height: 8),
                               Text(
                                 'تخصيص',
-                                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                  color: _selectedMessageType == 3
-                                      ? Theme.of(context).colorScheme.primary
-                                      : Theme.of(context).colorScheme.onSurface,
-                                ),
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleMedium
+                                    ?.copyWith(
+                                      color: _selectedMessageType == 3
+                                          ? Theme.of(context)
+                                              .colorScheme
+                                              .primary
+                                          : Theme.of(context)
+                                              .colorScheme
+                                              .onSurface,
+                                    ),
                               ),
                             ],
                           ),
@@ -541,7 +624,8 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                   }
                 },
                 decoration: InputDecoration(
-                  hintText: 'اكتب رسالتك المخصصة هنا...\nمثال: مرحباً @الاسم لديك @النوع بقيمة @المبلغ',
+                  hintText:
+                      'اكتب رسالتك المخصصة هنا...\nمثال: مرحباً @الاسم لديك @النوع بقيمة @المبلغ',
                   helperText: 'اكتب @ لإظهار قائمة المتغيرات المتاحة',
                   helperMaxLines: 2,
                   border: OutlineInputBorder(
@@ -562,7 +646,10 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                   width: double.infinity,
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .primaryContainer
+                        .withOpacity(0.3),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(_replaceVariables(_customMessageController.text)),
@@ -596,12 +683,14 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                           const SizedBox(height: 20),
                           CircleAvatar(
                             radius: 40,
-                            backgroundColor: Theme.of(context).colorScheme.secondary,
+                            backgroundColor:
+                                Theme.of(context).colorScheme.secondary,
                             child: Text(
                               widget.customer.name[0].toUpperCase(),
                               style: TextStyle(
                                 fontSize: 32,
-                                color: Theme.of(context).colorScheme.onSecondary,
+                                color:
+                                    Theme.of(context).colorScheme.onSecondary,
                               ),
                             ),
                           ),
@@ -619,7 +708,10 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                             widget.customer.phone,
                             style: TextStyle(
                               fontSize: 16,
-                              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurface
+                                  .withOpacity(0.7),
                             ),
                           ),
                           const SizedBox(height: 20),
@@ -648,13 +740,18 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                                     vertical: 6,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: Theme.of(context).colorScheme.secondary.withOpacity(0.2),
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .secondary
+                                        .withOpacity(0.2),
                                     borderRadius: BorderRadius.circular(20),
                                   ),
                                   child: Text(
                                     '${widget.payment.amount.abs()} ₪',
                                     style: TextStyle(
-                                      color: Theme.of(context).colorScheme.secondary,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .secondary,
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
@@ -665,14 +762,14 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                             ListTile(
                               contentPadding: EdgeInsets.zero,
                               leading: CircleAvatar(
-                                backgroundColor: widget.payment.amount >= 0 
+                                backgroundColor: widget.payment.amount >= 0
                                     ? Colors.green.withOpacity(0.2)
                                     : Colors.red.withOpacity(0.2),
                                 child: Icon(
-                                  widget.payment.amount >= 0 
+                                  widget.payment.amount >= 0
                                       ? Icons.arrow_upward
                                       : Icons.arrow_downward,
-                                  color: widget.payment.amount >= 0 
+                                  color: widget.payment.amount >= 0
                                       ? Colors.green
                                       : Colors.red,
                                 ),
@@ -680,13 +777,16 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                               title: Text(
                                 'نوع المعاملة',
                                 style: TextStyle(
-                                  color: Theme.of(context).colorScheme.onSurface,
+                                  color:
+                                      Theme.of(context).colorScheme.onSurface,
                                 ),
                               ),
                               subtitle: Text(
                                 widget.payment.amount >= 0 ? 'دفعة' : 'دين',
                                 style: TextStyle(
-                                  color: widget.payment.amount >= 0 ? Colors.green : Colors.red,
+                                  color: widget.payment.amount >= 0
+                                      ? Colors.green
+                                      : Colors.red,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
@@ -694,17 +794,22 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                             ListTile(
                               contentPadding: EdgeInsets.zero,
                               leading: Icon(Icons.calendar_today,
-                                  color: Theme.of(context).colorScheme.secondary),
+                                  color:
+                                      Theme.of(context).colorScheme.secondary),
                               title: Text(
                                 'تاريخ الاستحقاق',
                                 style: TextStyle(
-                                  color: Theme.of(context).colorScheme.onSurface,
+                                  color:
+                                      Theme.of(context).colorScheme.onSurface,
                                 ),
                               ),
                               subtitle: Text(
                                 _formatDate(widget.payment.date),
                                 style: TextStyle(
-                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withOpacity(0.7),
                                 ),
                               ),
                             ),
@@ -712,17 +817,23 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                               ListTile(
                                 contentPadding: EdgeInsets.zero,
                                 leading: Icon(Icons.note,
-                                    color: Theme.of(context).colorScheme.secondary),
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .secondary),
                                 title: Text(
                                   'ملاحظات',
                                   style: TextStyle(
-                                    color: Theme.of(context).colorScheme.onSurface,
+                                    color:
+                                        Theme.of(context).colorScheme.onSurface,
                                   ),
                                 ),
                                 subtitle: Text(
                                   widget.payment.notes!,
                                   style: TextStyle(
-                                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurface
+                                        .withOpacity(0.7),
                                   ),
                                 ),
                               ),
@@ -754,7 +865,8 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                             child: const Icon(Icons.add),
                             onPressed: () async {
                               final now = DateTime.now();
-                              final lastDate = now.add(const Duration(days: 365)); // سنة من اليوم
+                              final lastDate = now.add(
+                                  const Duration(days: 365)); // سنة من اليوم
                               final pickedDate = await showDatePicker(
                                 context: context,
                                 initialDate: now,
@@ -788,9 +900,10 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                       (context, index) {
                         final reminder = _scheduledReminders[index];
                         final now = DateTime.now();
-                        final difference = reminder.scheduleDate.difference(now);
+                        final difference =
+                            reminder.scheduleDate.difference(now);
                         String remainingTime = '';
-                        
+
                         if (!reminder.isSent) {
                           remainingTime = _getRemainingTimeText(difference);
                         }
@@ -802,7 +915,8 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                             color: Colors.red,
                             alignment: Alignment.centerRight,
                             padding: const EdgeInsets.only(right: 16),
-                            child: const Icon(Icons.delete, color: Colors.white),
+                            child:
+                                const Icon(Icons.delete, color: Colors.white),
                           ),
                           onDismissed: (_) => _deleteReminder(index),
                           child: Card(
@@ -813,11 +927,15 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                             child: ListTile(
                               leading: CircleAvatar(
                                 backgroundColor: reminder.isSent
-                                    ? (reminder.hasError ? Colors.orange : Colors.green)
+                                    ? (reminder.hasError
+                                        ? Colors.orange
+                                        : Colors.green)
                                     : Colors.grey,
                                 child: Icon(
                                   reminder.isSent
-                                      ? (reminder.hasError ? Icons.error : Icons.check)
+                                      ? (reminder.hasError
+                                          ? Icons.error
+                                          : Icons.check)
                                       : Icons.alarm,
                                   color: Colors.white,
                                 ),
@@ -825,16 +943,21 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                               title: Text(
                                 _formatDateTime(reminder.scheduleDate),
                                 style: TextStyle(
-                                  color: Theme.of(context).colorScheme.onSurface,
+                                  color:
+                                      Theme.of(context).colorScheme.onSurface,
                                 ),
                               ),
                               subtitle: Text(
                                 reminder.isSent
-                                    ? (reminder.hasError ? 'فشل في الإرسال' : 'تم الإرسال')
+                                    ? (reminder.hasError
+                                        ? 'فشل في الإرسال'
+                                        : 'تم الإرسال')
                                     : remainingTime,
                                 style: TextStyle(
                                   color: reminder.isSent
-                                      ? (reminder.hasError ? Colors.orange : Colors.green)
+                                      ? (reminder.hasError
+                                          ? Colors.orange
+                                          : Colors.green)
                                       : Colors.grey,
                                 ),
                               ),

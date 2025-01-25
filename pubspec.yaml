@@ -57,6 +57,7 @@ dependencies:
   crystal_navigation_bar: ^1.0.2
   flutter_localizations:
     sdk: flutter
+  uuid: ^3.0.7
 
 dev_dependencies:
   flutter_test:
