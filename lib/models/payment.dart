@@ -1,4 +1,6 @@
 import 'package:hive/hive.dart';
+import 'dart:convert';
+import 'package:meta/meta.dart';
 
 part 'payment.g.dart';
 
@@ -8,37 +10,51 @@ class Payment extends HiveObject {
   int? id;
 
   @HiveField(1)
-  final int customerId;
+  int customerId;
 
   @HiveField(2)
-  final double amount;
+  double amount;
 
   @HiveField(3)
-  final DateTime date;
+  DateTime date;
 
   @HiveField(4)
-  final String? notes;
+  String? notes;
 
   @HiveField(5)
   DateTime? reminderDate;
 
   @HiveField(6)
-  bool reminderSent;
-
-  @HiveField(7)
-  bool isSynced;
-
-  @HiveField(8)
   bool isDeleted;
 
+  @HiveField(7)
+  String? title;
+
+  @HiveField(8)
+  bool isSynced;
+
   @HiveField(9)
-  DateTime? deletedAt;
+  DateTime? createdAt;
 
   @HiveField(10)
-  Map<String, dynamic>? customer;
+  DateTime? updatedAt;
 
   @HiveField(11)
-  final String? title;
+  String? userId;
+
+  @HiveField(12)
+  @protected
+  String? customerJson;
+
+  @HiveField(13)
+  bool reminderSent;
+
+  Map<String, dynamic>? get customer =>
+      customerJson != null ? json.decode(customerJson!) : null;
+
+  set customer(Map<String, dynamic>? value) {
+    customerJson = value != null ? json.encode(value) : null;
+  }
 
   String get customerName => customer?['name'] ?? 'عميل غير معروف';
 
@@ -49,13 +65,19 @@ class Payment extends HiveObject {
     required this.date,
     this.notes,
     this.reminderDate,
-    this.reminderSent = false,
-    this.isSynced = false,
     this.isDeleted = false,
-    this.deletedAt,
-    this.customer,
     this.title,
-  });
+    this.isSynced = false,
+    this.createdAt,
+    this.updatedAt,
+    this.userId,
+    Map<String, dynamic>? customer,
+    this.reminderSent = false,
+  }) {
+    if (customer != null) {
+      this.customer = customer;
+    }
+  }
 
   Map<String, dynamic> toMap() {
     return {
@@ -65,10 +87,11 @@ class Payment extends HiveObject {
       'date': date.toIso8601String(),
       'notes': notes,
       'reminder_date': reminderDate?.toIso8601String(),
-      'reminder_sent': reminderSent ? 1 : 0,
-      'title': title,
       'is_deleted': isDeleted ? 1 : 0,
-      'deleted_at': deletedAt?.toIso8601String(),
+      'title': title,
+      'created_at': createdAt?.toIso8601String(),
+      'updated_at': updatedAt?.toIso8601String(),
+      'user_id': userId,
     };
   }
 
@@ -89,13 +112,15 @@ class Payment extends HiveObject {
       reminderDate: map['reminder_date'] != null
           ? DateTime.parse(map['reminder_date'])
           : null,
-      reminderSent: map['reminder_sent'] == 1 || map['reminder_sent'] == true,
-      title: map['title'],
       isDeleted: map['is_deleted'] == 1 || map['is_deleted'] == true,
-      deletedAt:
-          map['deleted_at'] != null ? DateTime.parse(map['deleted_at']) : null,
-      customer: map['customers'],
+      title: map['title'],
       isSynced: true,
+      createdAt:
+          map['created_at'] != null ? DateTime.parse(map['created_at']) : null,
+      updatedAt:
+          map['updated_at'] != null ? DateTime.parse(map['updated_at']) : null,
+      userId: map['user_id'],
+      customer: map['customers'],
     );
   }
 
@@ -106,12 +131,13 @@ class Payment extends HiveObject {
     DateTime? date,
     String? notes,
     DateTime? reminderDate,
-    bool? reminderSent,
     bool? isDeleted,
-    bool? isSynced,
-    DateTime? deletedAt,
-    Map<String, dynamic>? customer,
     String? title,
+    bool? isSynced,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    String? userId,
+    Map<String, dynamic>? customer,
   }) {
     return Payment(
       id: id ?? this.id,
@@ -120,12 +146,13 @@ class Payment extends HiveObject {
       date: date ?? this.date,
       notes: notes ?? this.notes,
       reminderDate: reminderDate ?? this.reminderDate,
-      reminderSent: reminderSent ?? this.reminderSent,
       isDeleted: isDeleted ?? this.isDeleted,
-      isSynced: isSynced ?? this.isSynced,
-      deletedAt: deletedAt ?? this.deletedAt,
-      customer: customer ?? this.customer,
       title: title ?? this.title,
+      isSynced: isSynced ?? this.isSynced,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      userId: userId ?? this.userId,
+      customer: customer ?? this.customer,
     );
   }
 
@@ -140,29 +167,39 @@ class Payment extends HiveObject {
     return Payment(
       id: json['id'] != null ? int.parse(json['id'].toString()) : null,
       customerId: parseCustomerId(json['customer_id']),
-      amount: (json['amount'] as num).toDouble(),
+      amount: double.parse(json['amount'].toString()),
       date: DateTime.parse(json['date']),
       notes: json['notes'],
       reminderDate: json['reminder_date'] != null
           ? DateTime.parse(json['reminder_date'])
           : null,
-      reminderSent: json['reminder_sent'] == true,
+      isDeleted: json['is_deleted'] ?? false,
       title: json['title'],
-      customer: json['customers'],
       isSynced: true,
+      createdAt: json['created_at'] != null
+          ? DateTime.parse(json['created_at'])
+          : null,
+      updatedAt: json['updated_at'] != null
+          ? DateTime.parse(json['updated_at'])
+          : null,
+      userId: json['user_id'],
+      customer: json['customers'],
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
-      'id': id?.toString(),
+      'id': id,
       'customer_id': customerId.toString(),
       'amount': amount,
       'date': date.toIso8601String(),
       'notes': notes,
       'reminder_date': reminderDate?.toIso8601String(),
-      'reminder_sent': reminderSent,
+      'is_deleted': isDeleted,
       'title': title,
+      'created_at': createdAt?.toIso8601String(),
+      'updated_at': updatedAt?.toIso8601String(),
+      'user_id': userId,
     };
   }
 }

@@ -86,25 +86,19 @@ class Customer extends HiveObject {
 
   factory Customer.fromMap(Map<String, dynamic> map) {
     return Customer(
-      id: map['id'] != null ? int.parse(map['id'].toString()) : null,
+      id: int.parse(map['id'].toString()),
       name: map['name'] ?? '',
       phone: map['phone'] ?? '',
-      address: map['address'],
-      notes: map['notes'],
-      color: map['color'] ?? '#448AFF',
-      balance: (map['balance'] as num?)?.toDouble() ?? 0.0,
-      lastPaymentDate: map['last_payment_date'] != null
-          ? DateTime.parse(map['last_payment_date'])
-          : null,
-      createdAt: map['created_at'] != null
-          ? DateTime.parse(map['created_at'])
-          : DateTime.now(),
-      updatedAt: map['updated_at'] != null
-          ? DateTime.parse(map['updated_at'])
-          : DateTime.now(),
-      deletedAt:
-          map['deleted_at'] != null ? DateTime.parse(map['deleted_at']) : null,
+      address: map['address'] ?? '',
+      notes: map['notes'] ?? '',
+      color: map['color'] ?? '#FF0000',
+      balance: (map['balance'] ?? 0.0).toDouble(),
       userId: map['user_id'],
+      createdAt:
+          map['created_at'] != null ? DateTime.parse(map['created_at']) : null,
+      updatedAt:
+          map['updated_at'] != null ? DateTime.parse(map['updated_at']) : null,
+      isSynced: map['is_synced'] ?? true,
     );
   }
 
@@ -142,5 +136,18 @@ class Customer extends HiveObject {
     )
       ..isSynced = isSynced ?? this.isSynced
       ..isDeleted = isDeleted ?? this.isDeleted;
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'name': name,
+      'phone': phone,
+      'address': address,
+      'notes': notes,
+      'color': color,
+      'balance': balance,
+      'created_at': DateTime.now().toIso8601String(),
+      'updated_at': DateTime.now().toIso8601String(),
+    };
   }
 }

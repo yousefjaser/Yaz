@@ -167,105 +167,28 @@ class CustomersProvider extends ChangeNotifier {
   }
 
   Future<void> addCustomer(Customer customer) async {
-    _isLoading = true;
-    notifyListeners();
-
     try {
-      final supabase = Supabase.instance.client;
+      // إضافة العميل إلى قاعدة البيانات
+      await _databaseService.addCustomer(customer);
 
-      // التحقق من الاتصال بالإنترنت
-      final connectivityResult = await Connectivity().checkConnectivity();
-      if (connectivityResult == ConnectivityResult.none) {
-        debugPrint('لا يوجد اتصال بالإنترنت، حفظ العميل محلياً...');
-        await _databaseService.saveLocalCustomer(customer);
-        _customers.add(customer);
-        _updateFilteredCustomers();
-        throw Exception('تم حفظ العميل محلياً، ستتم المزامنة عند توفر الاتصال');
-      }
+      // تحديث القائمة المحلية مباشرة
+      _customers.add(customer);
+      _applyFilters(); // تحديث القائمة المفلترة
+      notifyListeners();
 
-      // التحقق من الجلسة وتجديدها إذا لزم الأمر
-      final session = supabase.auth.currentSession;
-      if (session == null || session.isExpired) {
-        debugPrint('الجلسة منتهية، محاولة تجديد الجلسة...');
-        try {
-          // محاولة تجديد الجلسة عدة مرات
-          for (int i = 0; i < 3; i++) {
-            try {
-              final response = await supabase.auth.refreshSession();
-              if (response.session == null) {
-                if (i == 2) {
-                  throw Exception('فشل في تجديد الجلسة');
-                }
-                await Future.delayed(Duration(seconds: 1));
-                continue;
-              }
-              debugPrint('تم تجديد الجلسة بنجاح');
-              break;
-            } catch (e) {
-              if (i == 2) {
-                throw e;
-              }
-              await Future.delayed(Duration(seconds: 1));
-            }
-          }
-        } catch (e) {
-          debugPrint('خطأ في تجديد الجلسة: $e');
-          // حفظ العميل محلياً في حالة فشل تجديد الجلسة
-          await _databaseService.saveLocalCustomer(customer);
-          _customers.add(customer);
-          _updateFilteredCustomers();
-          throw Exception(
-              'تم حفظ العميل محلياً، يرجى إعادة تسجيل الدخول لمزامنة البيانات');
-        }
-      }
-
-      final userId = supabase.auth.currentUser?.id;
-      if (userId == null) {
-        throw Exception('لم يتم العثور على معرف المستخدم');
-      }
-
-      // إضافة معرف المستخدم للعميل
-      customer.userId = userId;
-
-      // محاولة إضافة العميل مع إعادة المحاولة في حالة الفشل
-      for (int i = 0; i < 3; i++) {
-        try {
-          final customerId = await _databaseService.insertCustomer(customer);
-          customer.id = customerId;
-          _customers.add(customer);
-          _updateFilteredCustomers();
-          debugPrint('تم إضافة العميل بنجاح');
-          return;
-        } catch (e) {
-          if (e.toString().contains('JWT expired')) {
-            debugPrint('انتهت صلاحية الجلسة، محاولة تجديد الجلسة...');
-            try {
-              await supabase.auth.refreshSession();
-              if (i < 2) continue;
-            } catch (refreshError) {
-              debugPrint('خطأ في تجديد الجلسة: $refreshError');
-            }
-          }
-
-          if (i == 2) {
-            // حفظ العميل محلياً في حالة فشل جميع المحاولات
-            debugPrint(
-                'فشلت جميع محاولات الإضافة للسيرفر، حفظ العميل محلياً...');
-            await _databaseService.saveLocalCustomer(customer);
-            _customers.add(customer);
-            _updateFilteredCustomers();
-            throw Exception(
-                'تم حفظ العميل محلياً، ستتم المزامنة عند توفر الاتصال');
-          }
-          await Future.delayed(Duration(seconds: 1));
-        }
-      }
+      // إعادة تحميل العملاء لضمان التزامن
+      await loadCustomers();
     } catch (e) {
       debugPrint('خطأ في إضافة العميل: $e');
-      rethrow;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
+      // حتى في حالة الخطأ، إذا تم الحفظ محلياً نقوم بإضافته للقائمة
+      if (!_customers.contains(customer)) {
+        _customers.add(customer);
+        _applyFilters();
+        notifyListeners();
+      }
+      if (!e.toString().contains('تم حفظ العميل محلياً')) {
+        rethrow;
+      }
     }
   }
 

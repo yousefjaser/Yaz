@@ -23,19 +23,19 @@ class PaymentAdapter extends TypeAdapter<Payment> {
       date: fields[3] as DateTime,
       notes: fields[4] as String?,
       reminderDate: fields[5] as DateTime?,
-      reminderSent: fields[6] as bool,
-      isSynced: fields[7] as bool,
-      isDeleted: fields[8] as bool,
-      deletedAt: fields[9] as DateTime?,
-      customer: (fields[10] as Map?)?.cast<String, dynamic>(),
-      title: fields[11] as String?,
-    );
+      isDeleted: fields[6] as bool,
+      title: fields[7] as String?,
+      isSynced: fields[8] as bool,
+      createdAt: fields[9] as DateTime?,
+      updatedAt: fields[10] as DateTime?,
+      userId: fields[11] as String?,
+    )..customerJson = fields[12] as String?;
   }
 
   @override
   void write(BinaryWriter writer, Payment obj) {
     writer
-      ..writeByte(12)
+      ..writeByte(13)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -49,17 +49,19 @@ class PaymentAdapter extends TypeAdapter<Payment> {
       ..writeByte(5)
       ..write(obj.reminderDate)
       ..writeByte(6)
-      ..write(obj.reminderSent)
-      ..writeByte(7)
-      ..write(obj.isSynced)
-      ..writeByte(8)
       ..write(obj.isDeleted)
+      ..writeByte(7)
+      ..write(obj.title)
+      ..writeByte(8)
+      ..write(obj.isSynced)
       ..writeByte(9)
-      ..write(obj.deletedAt)
+      ..write(obj.createdAt)
       ..writeByte(10)
-      ..write(obj.customer)
+      ..write(obj.updatedAt)
       ..writeByte(11)
-      ..write(obj.title);
+      ..write(obj.userId)
+      ..writeByte(12)
+      ..write(obj.customerJson);
   }
 
   @override

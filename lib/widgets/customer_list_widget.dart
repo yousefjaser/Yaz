@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
 import 'package:yaz/models/customer.dart';
 import 'package:yaz/models/payment.dart';
@@ -49,6 +50,9 @@ class _CustomerListWidgetState extends State<CustomerListWidget> {
   final Map<int, Payment?> _lastPayments = {};
   final _debouncer = Debouncer(milliseconds: 300);
   List<Customer> _filteredCustomers = [];
+  double _searchBarHeight = 60.0;
+  double _searchBarOpacity = 1.0;
+  bool _isSearchBarVisible = true;
 
   DateTime? _startDate;
   DateTime? _endDate;
@@ -63,6 +67,7 @@ class _CustomerListWidgetState extends State<CustomerListWidget> {
     _filteredCustomers = widget.customers;
     _loadLastPayments();
     _initDb();
+    _scrollController.addListener(_onScroll);
   }
 
   Future<void> _initDb() async {
@@ -92,6 +97,26 @@ class _CustomerListWidgetState extends State<CustomerListWidget> {
           }).toList();
         }
       });
+    });
+  }
+
+  void _onScroll() {
+    if (!mounted) return;
+    final offset = _scrollController.offset;
+    final scrollDelta = _scrollController.position.userScrollDirection;
+
+    setState(() {
+      if (scrollDelta == ScrollDirection.forward) {
+        // السحب للأعلى - إظهار مربع البحث
+        _searchBarHeight = 60.0;
+        _searchBarOpacity = 1.0;
+        _isSearchBarVisible = true;
+      } else if (scrollDelta == ScrollDirection.reverse && offset > 10) {
+        // السحب للأسفل - إخفاء مربع البحث
+        _searchBarHeight = 0.0;
+        _searchBarOpacity = 0.0;
+        _isSearchBarVisible = false;
+      }
     });
   }
 
@@ -239,24 +264,78 @@ class _CustomerListWidgetState extends State<CustomerListWidget> {
       textDirection: ui.TextDirection.rtl,
       child: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'البحث عن عميل...',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.filter_list),
-                  onPressed: _showFilterDialog,
+          // حالة المزامنة
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: _hasUnsyncedCustomers()
+                          ? Colors.orange.withOpacity(0.1)
+                          : Colors.green.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _hasUnsyncedCustomers()
+                              ? Icons.sync_problem
+                              : Icons.sync,
+                          color: _hasUnsyncedCustomers()
+                              ? Colors.orange
+                              : Colors.green,
+                          size: 20,
+                        ),
+                        SizedBox(width: 8),
+                        Text(
+                          _hasUnsyncedCustomers()
+                              ? 'يوجد عملاء في انتظار المزامنة'
+                              : 'جميع العملاء متزامنون',
+                          style: TextStyle(
+                            color: _hasUnsyncedCustomers()
+                                ? Colors.orange
+                                : Colors.green,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
+              ],
+            ),
+          ),
+          // مربع البحث مع تأثير الظهور والاختفاء
+          AnimatedContainer(
+            duration: Duration(milliseconds: 200),
+            height: _searchBarHeight,
+            child: AnimatedOpacity(
+              duration: Duration(milliseconds: 200),
+              opacity: _searchBarOpacity,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'البحث عن عميل...',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.filter_list),
+                      onPressed: _showFilterDialog,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  onChanged: (value) {
+                    _applyFilters();
+                  },
                 ),
               ),
-              onChanged: (value) {
-                _applyFilters();
-              },
             ),
           ),
           Expanded(
@@ -320,11 +399,14 @@ class _CustomerListWidgetState extends State<CustomerListWidget> {
         color: Colors.red,
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: 16),
-        child: const Text('حذف',
-            style: TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.bold)),
+        child: const Text(
+          'حذف',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
       ),
       secondaryBackground: Container(
         color: Colors.blue,
@@ -337,59 +419,90 @@ class _CustomerListWidgetState extends State<CustomerListWidget> {
           _navigateToEditCustomer(context, customer);
           return false;
         } else {
-          return await showDialog<bool>(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('تأكيد الحذف'),
-              content: const Text('هل تريد نقل العميل إلى سلة المحذوفات؟'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('إلغاء'),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('نقل'),
-                ),
-              ],
-            ),
-          );
+          return await _confirmDelete(context, customer);
         }
       },
       child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: Color(
-            int.parse(customer.color.replaceAll('#', '0xFF')),
-          ),
-          child: Text(
-            customer.name.characters.first,
-            style: const TextStyle(color: Colors.white),
-          ),
-        ),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        leading: Stack(
           children: [
-            Text(
-              customer.name,
-              style: const TextStyle(
-                color: Color(0xFFAAAAAA),
-                fontSize: 16,
+            CircleAvatar(
+              backgroundColor: Color(
+                int.parse(customer.color.replaceAll('#', '0xFF')),
+              ),
+              child: Text(
+                customer.name.characters.first,
+                style: const TextStyle(color: Colors.white),
               ),
             ),
-            Text(
-              customer.phone,
-              style: const TextStyle(
-                color: Color(0xFF888888),
-                fontSize: 14,
+            if (!customer.isSynced)
+              Positioned(
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    color: Colors.orange,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.sync,
+                    size: 12,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+          ],
+        ),
+        title: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    customer.name,
+                    style: const TextStyle(
+                      color: Color(0xFFAAAAAA),
+                      fontSize: 16,
+                    ),
+                  ),
+                  Text(
+                    customer.phone,
+                    style: const TextStyle(
+                      color: Color(0xFF888888),
+                      fontSize: 14,
+                    ),
+                  ),
+                  if (!customer.isSynced)
+                    const Text(
+                      'في انتظار المزامنة',
+                      style: TextStyle(
+                        color: Colors.orange,
+                        fontSize: 12,
+                      ),
+                    ),
+                  if (lastPayment?.reminderDate != null)
+                    Text(
+                      _formatRemainingTime(lastPayment!.reminderDate!),
+                      style: TextStyle(
+                        color: _getReminderColor(lastPayment.reminderDate!),
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                ],
               ),
             ),
-            if (lastPayment?.reminderDate != null)
-              Text(
-                _formatRemainingTime(lastPayment!.reminderDate!),
-                style: TextStyle(
-                  color: _getReminderColor(lastPayment.reminderDate!),
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
+            if (!customer.isSynced)
+              const Padding(
+                padding: EdgeInsets.only(left: 8),
+                child: Tooltip(
+                  message: 'في انتظار المزامنة',
+                  child: Icon(
+                    Icons.cloud_upload,
+                    size: 16,
+                    color: Colors.orange,
+                  ),
                 ),
               ),
           ],
@@ -692,22 +805,29 @@ class _CustomerListWidgetState extends State<CustomerListWidget> {
     return total;
   }
 
-  Future<void> _deleteCustomer(Customer customer) async {
-    try {
-      final db = await DatabaseService.getInstance();
-      await db.deleteCustomer(customer.id!);
+  Future<bool?> _confirmDelete(BuildContext context, Customer customer) async {
+    return await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('تأكيد الحذف'),
+        content: const Text('هل تريد نقل العميل إلى سلة المحذوفات؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('إلغاء'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('نقل'),
+          ),
+        ],
+      ),
+    );
+  }
 
-      if (!mounted) return;
-      context.read<CustomersProvider>().removeCustomer(customer);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم حذف العميل بنجاح')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('خطأ في حذف العميل: $e')),
-      );
-    }
+  // إضافة دالة للتحقق من وجود عملاء غير متزامنين
+  bool _hasUnsyncedCustomers() {
+    return widget.customers.any((customer) => !customer.isSynced);
   }
 
   @override

@@ -22,6 +22,10 @@ import 'package:workmanager/workmanager.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:yaz/widgets/drawer_widget.dart';
+import 'package:yaz/services/local_storage_service.dart';
+import 'package:yaz/services/sync_service.dart';
+import 'package:yaz/providers/connectivity_provider.dart';
+import 'package:yaz/widgets/offline_banner.dart';
 
 String _formatDateTime(DateTime dateTime) {
   final localDateTime = dateTime.toLocal();
@@ -228,6 +232,9 @@ Future<void> main() async {
               return customers ?? CustomersProvider(db);
             },
           ),
+          ChangeNotifierProvider(
+            create: (_) => ConnectivityProvider(),
+          ),
         ],
         child: const MyApp(),
       ),
@@ -361,59 +368,83 @@ class _MainScreenState extends State<MainScreen> {
       textDirection: TextDirection.rtl,
       child: Scaffold(
         drawer: const DrawerWidget(),
-        appBar: AppBar(
-          title: Text(_currentIndex == 0 ? 'العملاء' : 'الملف الشخصي'),
-          centerTitle: true,
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-        ),
-        body: Stack(
-          children: [
-            PageView(
-              controller: _pageController,
-              onPageChanged: _onPageChanged,
-              children: [
-                Consumer<CustomersProvider>(
-                  builder: (context, provider, _) {
-                    return CustomerListWidget(
-                      customers: provider.filteredCustomers,
-                    );
-                  },
-                ),
-                const ProfileScreen(),
-              ],
-            ),
-            if (_currentIndex == 0)
-              Positioned(
-                left: 16,
-                bottom: 90,
-                child: FloatingActionButton(
-                  onPressed: () {
-                    showModalBottomSheet(
-                      context: context,
-                      isScrollControlled: true,
-                      builder: (context) => const AddCustomerSheet(),
-                    );
-                  },
-                  child: const Icon(Icons.add),
+        body: SafeArea(
+          child: Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                child: AppBar(
+                  title: Text(
+                    _currentIndex == 0 ? 'العملاء' : 'الملف الشخصي',
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  centerTitle: true,
+                  backgroundColor: Colors.transparent,
+                  elevation: 0,
+                  leading: Builder(
+                    builder: (context) => IconButton(
+                      icon: const Icon(Icons.menu),
+                      onPressed: () => Scaffold.of(context).openDrawer(),
+                    ),
+                  ),
                 ),
               ),
-            Positioned(
-              left: 16,
-              right: 16,
-              bottom: 16,
-              child: BottomNav(
-                currentIndex: _currentIndex,
-                onTap: (index) {
-                  _pageController.animateToPage(
-                    index,
-                    duration: const Duration(milliseconds: 300),
-                    curve: Curves.easeInOut,
-                  );
-                },
+              const OfflineBanner(),
+              Expanded(
+                child: Stack(
+                  children: [
+                    PageView(
+                      controller: _pageController,
+                      onPageChanged: _onPageChanged,
+                      children: [
+                        Consumer<CustomersProvider>(
+                          builder: (context, provider, _) {
+                            return CustomerListWidget(
+                              customers: provider.filteredCustomers,
+                            );
+                          },
+                        ),
+                        const ProfileScreen(),
+                      ],
+                    ),
+                    if (_currentIndex == 0)
+                      Positioned(
+                        left: 16,
+                        bottom: 90,
+                        child: FloatingActionButton(
+                          onPressed: () {
+                            showModalBottomSheet(
+                              context: context,
+                              isScrollControlled: true,
+                              builder: (context) => const AddCustomerSheet(),
+                            );
+                          },
+                          child: const Icon(Icons.add),
+                        ),
+                      ),
+                    Positioned(
+                      left: 16,
+                      right: 16,
+                      bottom: 16,
+                      child: BottomNav(
+                        currentIndex: _currentIndex,
+                        onTap: (index) {
+                          _pageController.animateToPage(
+                            index,
+                            duration: const Duration(milliseconds: 300),
+                            curve: Curves.easeInOut,
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:yaz/models/customer.dart';
 import 'package:yaz/models/payment.dart';
+import 'package:yaz/screens/edit_customer_screen.dart';
 import 'package:yaz/services/database_service.dart';
 import 'package:yaz/widgets/add_payment_sheet.dart';
 import 'package:intl/intl.dart' as intl;
@@ -38,11 +39,16 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
   bool _isInitialized = false;
   bool _isLoading = false;
   String _error = '';
+  final ScrollController _scrollController = ScrollController();
+  double _containerHeight = 200.0;
+  double _containerOpacity = 1.0;
+  bool _isExpanded = true;
 
   @override
   void initState() {
     super.initState();
     _initDb();
+    _scrollController.addListener(_onScroll);
   }
 
   Future<void> _initDb() async {
@@ -77,26 +83,13 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
 
     try {
       final db = await DatabaseService.getInstance();
+      final payments = await db.getCustomerPayments(widget.customer.id!);
 
-      // محاولة جلب الدفعات مع إعادة المحاولة في حالة انتهاء الجلسة
-      for (int i = 0; i < 3; i++) {
-        try {
-          final payments = await db.getCustomerPayments(widget.customer.id!);
-          if (mounted) {
-            setState(() {
-              _payments = payments;
-              _isLoading = false;
-            });
-          }
-          return;
-        } catch (e) {
-          if (e.toString().contains('JWT expired')) {
-            debugPrint('انتهت صلاحية الجلسة، محاولة تجديد الجلسة...');
-            await Future.delayed(Duration(seconds: 1));
-            continue;
-          }
-          rethrow;
-        }
+      if (mounted) {
+        setState(() {
+          _payments = payments;
+          _isLoading = false;
+        });
       }
     } catch (e) {
       if (mounted) {
@@ -132,6 +125,18 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
       ),
     );
     _loadPayments();
+  }
+
+  void _onScroll() {
+    if (!mounted) return;
+    final offset = _scrollController.offset;
+    final maxOffset = 100.0;
+
+    setState(() {
+      _containerHeight = 200.0 - (offset).clamp(0.0, maxOffset);
+      _containerOpacity = (1 - (offset / maxOffset)).clamp(0.0, 1.0);
+      _isExpanded = offset < maxOffset / 2;
+    });
   }
 
   @override
@@ -170,71 +175,56 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
         body: Column(
           children: [
             Container(
-              padding: const EdgeInsets.all(16),
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildInfoRow('الاسم:', widget.customer.name),
-                      const Divider(),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildInfoRow(
-                                'رقم الهاتف:', widget.customer.phone),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.phone),
-                            onPressed: () =>
-                                _makePhoneCall(widget.customer.phone),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.chat, color: Colors.green),
-                            onPressed: () =>
-                                _sendWhatsApp(widget.customer.phone),
-                          ),
-                        ],
-                      ),
-                      if (widget.customer.address != null) ...[
-                        const Divider(),
-                        _buildInfoRow('العنوان:', widget.customer.address!),
-                      ],
-                      if (widget.customer.notes != null) ...[
-                        const Divider(),
-                        _buildInfoRow('ملاحظات:', widget.customer.notes!),
-                      ],
-                    ],
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: Theme.of(context).primaryColor.withOpacity(0.1),
+                border: Border(
+                  bottom: BorderSide(
+                    color: Theme.of(context).dividerColor,
+                    width: 1,
                   ),
                 ),
               ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _buildAmountColumn(
+                      'المبلغ الكلي', widget.customer.balance, Colors.blue),
+                  _buildAmountColumn(
+                      'المدفوع', _calculateTotalPaid(), Colors.green),
+                  _buildAmountColumn(
+                      'الدين المتبقي', _calculateTotalDebt(), Colors.red),
+                ],
+              ),
             ),
-            if (_isLoading)
-              const Center(child: CircularProgressIndicator())
-            else ...[
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _buildSummaryCard(
-                      'المبلغ المدفوع',
-                      _calculateTotalPaid(),
-                      Colors.green,
+            Expanded(
+              child: CustomScrollView(
+                controller: _scrollController,
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Container(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        children: [
+                          _buildContactInfo(),
+                          const SizedBox(height: 16),
+                          _buildAdditionalInfo(),
+                        ],
+                      ),
                     ),
-                    _buildSummaryCard(
-                      'الدين المتبقي',
-                      _calculateTotalDebt(),
-                      Colors.red,
+                  ),
+                  SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        final payment = _payments[index];
+                        return _buildPaymentItem(payment);
+                      },
+                      childCount: _payments.length,
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-              Expanded(
-                child: _buildPaymentsList(),
-              ),
-            ],
+            ),
           ],
         ),
         floatingActionButton: FloatingActionButton(
@@ -254,23 +244,447 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
     );
   }
 
-  Widget _buildInfoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildAmountColumn(String title, double amount, Color color) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 12,
+            color: Theme.of(context).textTheme.bodySmall?.color,
+          ),
+        ),
+        SizedBox(height: 4),
+        Text(
+          '${amount.abs().toStringAsFixed(2)} ₪',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildContactInfo() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Theme.of(context).dividerColor.withOpacity(0.1),
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            label,
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
+          // معلومات الاتصال الرئيسية
+          Container(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                // صورة العميل
+                Container(
+                  width: 60,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    color: Color(int.parse(
+                        widget.customer.color.replaceAll('#', '0xFF'))),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Center(
+                    child: Text(
+                      widget.customer.name.characters.first,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                // معلومات العميل
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.customer.name,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.phone_android,
+                            size: 16,
+                            color: Theme.of(context).primaryColor,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            widget.customer.phone,
+                            style: TextStyle(
+                              color:
+                                  Theme.of(context).textTheme.bodyMedium?.color,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(value),
+          // أزرار الاتصال السريع
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _buildQuickActionButton(
+                  icon: Icons.phone,
+                  label: 'اتصال',
+                  color: Colors.blue,
+                  onTap: () => _makePhoneCall(widget.customer.phone),
+                ),
+                _buildQuickActionButton(
+                  icon: Icons.message,
+                  label: 'رسالة',
+                  color: Colors.green,
+                  onTap: () => _sendWhatsApp(widget.customer.phone),
+                ),
+                _buildQuickActionButton(
+                  icon: Icons.edit,
+                  label: 'تعديل',
+                  color: Colors.orange,
+                  onTap: () => _editCustomer(),
+                ),
+                _buildQuickActionButton(
+                  icon: Icons.share,
+                  label: 'مشاركة',
+                  color: Colors.purple,
+                  onTap: () => _shareCustomerDetails(),
+                ),
+              ],
+            ),
           ),
+          // العنوان إذا كان موجوداً
+          if (widget.customer.address?.isNotEmpty ?? false)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                border: Border(
+                  top: BorderSide(
+                    color: Theme.of(context).dividerColor.withOpacity(0.1),
+                  ),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).primaryColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      Icons.location_on,
+                      color: Theme.of(context).primaryColor,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Text(
+                      widget.customer.address!,
+                      style: TextStyle(
+                        color: Theme.of(context).textTheme.bodyMedium?.color,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.map),
+                    onPressed: () => _openInMaps(widget.customer.address!),
+                    tooltip: 'فتح في الخريطة',
+                  ),
+                ],
+              ),
+            ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildAdditionalInfo() {
+    final hasNotes = widget.customer.notes?.isNotEmpty ?? false;
+    final hasCreatedAt = widget.customer.createdAt != null;
+
+    if (!hasNotes && !hasCreatedAt) return SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Theme.of(context).dividerColor.withOpacity(0.1),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (hasNotes)
+            Container(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.notes,
+                        size: 20,
+                        color: Theme.of(context).primaryColor,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'ملاحظات',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Theme.of(context).primaryColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    widget.customer.notes!,
+                    style: TextStyle(
+                      color: Theme.of(context).textTheme.bodyMedium?.color,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (hasCreatedAt)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                border: Border(
+                  top: hasNotes
+                      ? BorderSide(
+                          color:
+                              Theme.of(context).dividerColor.withOpacity(0.1),
+                        )
+                      : BorderSide.none,
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.calendar_today,
+                        size: 20,
+                        color: Theme.of(context).primaryColor,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'تاريخ الإضافة:',
+                        style: TextStyle(
+                          color: Theme.of(context).primaryColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Text(
+                    _formatDate(widget.customer.createdAt),
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(context).textTheme.bodyMedium?.color,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickActionButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color, size: 24),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPaymentItem(Payment payment) {
+    return Dismissible(
+      key: Key(payment.id.toString()),
+      background: Container(
+        color: Colors.red,
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 16),
+        child: const Text(
+          'حذف',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+      secondaryBackground: Container(
+        color: Colors.blue,
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.only(left: 16),
+        child: const Icon(Icons.edit, color: Colors.white),
+      ),
+      confirmDismiss: (direction) async {
+        if (direction == DismissDirection.endToStart) {
+          _editPayment(payment);
+          return false;
+        } else {
+          return await _confirmDelete(payment);
+        }
+      },
+      onDismissed: (direction) {
+        if (direction == DismissDirection.startToEnd) {
+          _deletePayment(payment);
+        }
+      },
+      child: InkWell(
+        onTap: () => _onPaymentTap(payment),
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 8,
+          ),
+          leading: Stack(
+            children: [
+              CircleAvatar(
+                backgroundColor:
+                    payment.amount > 0 ? Colors.green[100] : Colors.red[100],
+                child: Icon(
+                  payment.amount > 0
+                      ? Icons.arrow_upward
+                      : Icons.arrow_downward,
+                  color: payment.amount > 0 ? Colors.green : Colors.red,
+                ),
+              ),
+              if (!payment.isSynced)
+                Positioned(
+                  right: 0,
+                  bottom: 0,
+                  child: Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      color: Colors.orange,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.sync,
+                      size: 12,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          title: Row(
+            children: [
+              Text(
+                payment.title ?? (payment.amount > 0 ? 'دفعة' : 'دين'),
+                style: const TextStyle(
+                  color: Color(0xFFAAAAAA),
+                  fontSize: 16,
+                ),
+              ),
+              if (!payment.isSynced) ...[
+                const SizedBox(width: 8),
+                const Tooltip(
+                  message: 'في انتظار المزامنة',
+                  child: Icon(
+                    Icons.cloud_upload,
+                    size: 16,
+                    color: Colors.orange,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                intl.DateFormat('yyyy/MM/dd').format(payment.date),
+                style: const TextStyle(
+                  color: Color(0xFF888888),
+                  fontSize: 14,
+                ),
+              ),
+              if (payment.notes?.isNotEmpty ?? false)
+                Text(
+                  payment.notes!,
+                  style: const TextStyle(
+                    color: Color(0xFF666666),
+                    fontSize: 12,
+                  ),
+                ),
+            ],
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '${payment.amount.abs().toStringAsFixed(2)} ₪',
+                style: TextStyle(
+                  color: payment.amount > 0 ? Colors.green : Colors.red,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Icon(
+                Icons.arrow_forward_ios,
+                size: 16,
+                color: Color(0xFF888888),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -459,47 +873,8 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
         .fold(0.0, (sum, p) => sum + p.amount);
   }
 
-  Widget _buildSummaryCard(String title, double amount, Color color) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Text(
-              title,
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: color,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '${amount.toStringAsFixed(2)} ₪',
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showNotes(String notes) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('ملاحظات'),
-        content: Text(notes),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('حسناً'),
-          ),
-        ],
-      ),
-    );
+  String _formatDate(DateTime date) {
+    return intl.DateFormat('yyyy/MM/dd').format(date);
   }
 
   Future<bool> _confirmDelete(Payment payment) async {
@@ -558,133 +933,46 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
     );
   }
 
-  Widget _buildPaymentsList() {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    if (_payments.isEmpty) {
-      return const Center(
-        child: Text(
-          'لا توجد دفعات حتى الآن',
-          style: TextStyle(fontSize: 16),
-        ),
-      );
-    }
-
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E1E1E),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      margin: const EdgeInsets.all(8),
-      child: ListView.separated(
-        itemCount: _payments.length,
-        separatorBuilder: (context, index) => const Divider(
-          height: 1,
-          color: Color(0xFF2A2A2A),
-        ),
-        itemBuilder: (context, index) {
-          final payment = _payments[index];
-          return Dismissible(
-            key: Key(payment.id.toString()),
-            background: Container(
-              color: Colors.red,
-              alignment: Alignment.centerRight,
-              padding: const EdgeInsets.only(right: 16),
-              child: const Text('حذف',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold)),
-            ),
-            secondaryBackground: Container(
-              color: Colors.blue,
-              alignment: Alignment.centerLeft,
-              padding: const EdgeInsets.only(left: 16),
-              child: const Icon(Icons.edit, color: Colors.white),
-            ),
-            confirmDismiss: (direction) async {
-              if (direction == DismissDirection.endToStart) {
-                _editPayment(payment);
-                return false;
-              } else {
-                return await _confirmDelete(payment);
-              }
-            },
-            onDismissed: (direction) {
-              if (direction == DismissDirection.startToEnd) {
-                _deletePayment(payment);
-              }
-            },
-            child: InkWell(
-              onTap: () => _onPaymentTap(payment),
-              child: ListTile(
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                leading: CircleAvatar(
-                  backgroundColor:
-                      payment.amount > 0 ? Colors.green[100] : Colors.red[100],
-                  child: Icon(
-                    payment.amount > 0
-                        ? Icons.arrow_upward
-                        : Icons.arrow_downward,
-                    color: payment.amount > 0 ? Colors.green : Colors.red,
-                  ),
-                ),
-                title: Text(
-                  payment.title ?? (payment.amount > 0 ? 'دفعة' : 'دين'),
-                  style: const TextStyle(
-                    color: Color(0xFFAAAAAA),
-                    fontSize: 16,
-                  ),
-                ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      intl.DateFormat('yyyy/MM/dd').format(payment.date),
-                      style: const TextStyle(
-                        color: Color(0xFF888888),
-                        fontSize: 14,
-                      ),
-                    ),
-                    if (payment.notes?.isNotEmpty ?? false)
-                      Text(
-                        payment.notes!,
-                        style: const TextStyle(
-                          color: Color(0xFF666666),
-                          fontSize: 12,
-                        ),
-                      ),
-                  ],
-                ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      '${payment.amount.abs().toStringAsFixed(2)} ₪',
-                      style: TextStyle(
-                        color: payment.amount > 0 ? Colors.green : Colors.red,
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    const Icon(
-                      Icons.arrow_forward_ios,
-                      size: 16,
-                      color: Color(0xFF888888),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
+  Future<void> _editCustomer() async {
+    // تنفيذ عملية تعديل العميل
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => EditCustomerScreen(customer: widget.customer),
       ),
     );
+    if (result == true) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _shareCustomerDetails() async {
+    final text = '''
+معلومات العميل:
+الاسم: ${widget.customer.name}
+رقم الهاتف: ${widget.customer.phone}
+${widget.customer.address != null ? 'العنوان: ${widget.customer.address}\n' : ''}
+المبلغ الكلي: ${widget.customer.balance} ₪
+المدفوع: ${_calculateTotalPaid()} ₪
+الدين المتبقي: ${_calculateTotalDebt()} ₪
+''';
+
+    // مشاركة المعلومات
+    // يمكنك استخدام مكتبة share_plus هنا
+  }
+
+  Future<void> _openInMaps(String address) async {
+    final encodedAddress = Uri.encodeComponent(address);
+    final url =
+        'https://www.google.com/maps/search/?api=1&query=$encodedAddress';
+
+    try {
+      await launchUrl(Uri.parse(url));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا يمكن فتح الخريطة')),
+      );
+    }
   }
 }

@@ -7,8 +7,10 @@ import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'connectivity_service.dart';
+import 'local_storage_service.dart';
 
-class DatabaseService {
+class DatabaseService with ChangeNotifier {
   final _supabase = Supabase.instance.client;
   late final SyncService _syncService;
   bool _isInitialized = false;
@@ -36,32 +38,74 @@ class DatabaseService {
     if (_isInitialized) return;
 
     try {
-      debugPrint('فتح صناديق Hive...');
+      debugPrint('بدء تهيئة DatabaseService...');
+
+      // التحقق من حالة الاتصال بالإنترنت
+      final hasConnection = await ConnectivityService.isConnected();
+      debugPrint(hasConnection ? 'متصل بالإنترنت' : 'غير متصل بالإنترنت');
+
+      // تهيئة التخزين المحلي أولاً
       try {
-        _customersBox = await Hive.openBox<Customer>('customers');
+        debugPrint('فتح صناديق Hive...');
+
+        // محاولة تنظيف الصناديق القديمة إذا كانت موجودة
+        try {
+          await Hive.deleteBoxFromDisk('customers');
+          await Hive.deleteBoxFromDisk('payments');
+        } catch (e) {
+          debugPrint('تجاهل خطأ حذف الصناديق القديمة: $e');
+        }
+
+        // تهيئة صندوق العملاء
+        try {
+          _customersBox = await Hive.openBox<Customer>('customers');
+          debugPrint('تم فتح صندوق العملاء بنجاح');
+        } catch (e) {
+          debugPrint('خطأ في فتح صندوق العملاء: $e');
+          await Hive.deleteBoxFromDisk('customers');
+          _customersBox = await Hive.openBox<Customer>('customers');
+        }
+
+        // تهيئة صندوق الدفعات
+        try {
+          _paymentsBox = await Hive.openBox<Payment>('payments');
+          debugPrint('تم فتح صندوق الدفعات بنجاح');
+        } catch (e) {
+          debugPrint('خطأ في فتح صندوق الدفعات: $e');
+          await Hive.deleteBoxFromDisk('payments');
+          _paymentsBox = await Hive.openBox<Payment>('payments');
+        }
+
+        debugPrint('تم فتح جميع صناديق Hive بنجاح');
       } catch (e) {
-        debugPrint('خطأ في فتح صندوق العملاء: $e');
-        await Hive.deleteBoxFromDisk('customers');
-        _customersBox = await Hive.openBox<Customer>('customers');
+        debugPrint('خطأ في تهيئة التخزين المحلي: $e');
+        // إعادة تهيئة كاملة للتخزين المحلي
+        await Hive.deleteFromDisk();
+        throw Exception('فشل في تهيئة التخزين المحلي: $e');
       }
 
-      try {
-        _paymentsBox = await Hive.openBox<Payment>('payments');
-      } catch (e) {
-        debugPrint('خطأ في فتح صندوق الدفعات: $e');
-        await Hive.deleteBoxFromDisk('payments');
-        _paymentsBox = await Hive.openBox<Payment>('payments');
+      // إذا كان هناك اتصال بالإنترنت، نقوم بتهيئة Supabase والمزامنة
+      if (hasConnection) {
+        try {
+          debugPrint('تهيئة خدمة المزامنة...');
+          _syncService = SyncService(
+            _supabase,
+            this,
+            _customersBox,
+            _paymentsBox,
+          );
+
+          await _syncService.init();
+          debugPrint('تم تهيئة خدمة المزامنة بنجاح');
+        } catch (e) {
+          debugPrint('خطأ في تهيئة خدمة المزامنة: $e');
+          // نستمر في العمل حتى مع فشل المزامنة
+        }
+      } else {
+        debugPrint(
+            'العمل في وضع عدم الاتصال - سيتم استخدام التخزين المحلي فقط');
       }
 
-      debugPrint('تهيئة خدمة المزامنة...');
-      _syncService = SyncService(
-        _supabase,
-        this,
-        _customersBox,
-        _paymentsBox,
-      );
-
-      await _syncService.init();
       _isInitialized = true;
       debugPrint('تم تهيئة DatabaseService بنجاح');
     } catch (e) {
@@ -298,41 +342,46 @@ class DatabaseService {
   }
 
   Future<List<Payment>> getCustomerPayments(int customerId) async {
-    _checkInitialized();
-
     try {
-      // التحقق من صلاحية الجلسة وتجديدها إذا لزم الأمر
-      await _refreshSessionIfNeeded();
+      // جلب الدفعات المحلية أولاً
+      final localPayments = _paymentsBox.values
+          .where((payment) => payment.customerId == customerId)
+          .toList();
 
-      final userId = _supabase.auth.currentUser?.id;
-      if (userId == null) throw Exception('المستخدم غير مسجل الدخول');
-
-      // محاولة جلب الدفعات مع إعادة المحاولة في حالة الفشل
-      for (int i = 0; i < 3; i++) {
+      // إذا كان متصلاً، نحاول جلب الدفعات من السيرفر
+      if (await ConnectivityService.isConnected()) {
         try {
           final response = await _supabase
               .from('payments')
-              .select()
+              .select('*, customers(*)')
               .eq('customer_id', customerId)
               .eq('is_deleted', false)
               .order('date');
 
-          return (response as List)
-              .map((payment) => Payment.fromMap(payment))
-              .toList();
-        } catch (e) {
-          if (e.toString().contains('JWT expired')) {
-            debugPrint('انتهت صلاحية الجلسة، محاولة تجديد الجلسة...');
-            await _refreshSessionIfNeeded();
-            if (i < 2) continue;
+          final serverPayments = (response as List).map((payment) {
+            final p = Payment.fromMap(payment);
+            p.isSynced = true;
+            return p;
+          }).toList();
+
+          // تحديث التخزين المحلي
+          for (var payment in serverPayments) {
+            await _paymentsBox.put(payment.id.toString(), payment);
           }
-          rethrow;
+
+          return serverPayments;
+        } catch (e) {
+          debugPrint('خطأ في جلب الدفعات من السيرفر: $e');
+          return localPayments;
         }
       }
-      throw Exception('فشلت جميع محاولات جلب الدفعات');
+
+      // إذا لم يكن هناك اتصال، نعيد الدفعات المحلية فقط
+      localPayments.sort((a, b) => b.date.compareTo(a.date));
+      return localPayments;
     } catch (e) {
       debugPrint('خطأ في جلب الدفعات: $e');
-      rethrow;
+      return [];
     }
   }
 
@@ -383,18 +432,17 @@ class DatabaseService {
               'customer_id': payment.customerId,
               'amount': payment.amount,
               'date': payment.date.toIso8601String(),
-              'reminder_date': payment.reminderDate?.toIso8601String(),
               'notes': payment.notes,
-              'reminder_sent': payment.reminderDate != null ? false : null,
-              'reminder_sent_at': null,
-              'is_deleted': false,
+              'reminder_date': payment.reminderDate?.toIso8601String(),
               'created_at': DateTime.now().toIso8601String(),
               'updated_at': DateTime.now().toIso8601String(),
+              'user_id': payment.userId,
+              'reminder_sent': payment.reminderSent,
             })
             .select()
             .single();
 
-        payment.id = int.parse(response['id'].toString());
+        payment.id = response['id'];
         payment.isSynced = true;
         debugPrint('تم حفظ الدفعة على السيرفر. المعرف: ${payment.id}');
       } catch (e) {
@@ -428,7 +476,7 @@ class DatabaseService {
       'reminder_date': payment.reminderDate?.toIso8601String(),
       'reminder_sent': payment.reminderSent,
       'updated_at': DateTime.now().toIso8601String(),
-    }).eq('id', payment.id.toString());
+    }).eq('id', payment.id!);
   }
 
   Future<void> deletePayment(int paymentId) async {
@@ -725,18 +773,90 @@ class DatabaseService {
     }
   }
 
-  Future<void> addPayment(Customer customer, Payment payment) async {
+  Future<Customer> addCustomer(Customer customer) async {
     try {
-      final response = await _supabase.from('payments').insert({
-        'customer_id': customer.id,
-        'amount': payment.amount,
-        'date': payment.date.toIso8601String(),
-        'notes': payment.notes,
-        'reminder_date': payment.reminderDate?.toIso8601String(),
-      }).select();
+      customer.id = DateTime.now().millisecondsSinceEpoch;
+      customer.isSynced = false;
+      customer.createdAt = DateTime.now();
+      customer.updatedAt = DateTime.now();
+      customer.userId = _supabase.auth.currentUser?.id;
 
-      if (response == null || (response as List).isEmpty) {
-        throw Exception('فشل في إضافة الدفعة');
+      // حفظ في التخزين المحلي أولاً
+      await _customersBox.put(customer.id.toString(), customer);
+
+      if (await ConnectivityService.isConnected()) {
+        try {
+          final response = await _supabase.from('customers').insert({
+            'name': customer.name,
+            'phone': customer.phone,
+            'address': customer.address,
+            'notes': customer.notes,
+            'color': customer.color,
+            'balance': customer.balance,
+            'user_id': customer.userId,
+            'created_at': customer.createdAt!.toIso8601String(),
+            'updated_at': customer.updatedAt!.toIso8601String(),
+            'is_synced': true,
+          }).select();
+
+          if (response != null && (response as List).isNotEmpty) {
+            final oldId = customer.id.toString();
+            customer.id = response[0]['id'];
+            customer.isSynced = true;
+
+            await _customersBox.delete(oldId);
+            await _customersBox.put(customer.id.toString(), customer);
+            debugPrint('تمت مزامنة العميل ${customer.name} مع السيرفر');
+          }
+        } catch (e) {
+          debugPrint('خطأ في مزامنة العميل مع السيرفر: $e');
+        }
+      }
+
+      return customer;
+    } catch (e) {
+      debugPrint('خطأ في إضافة العميل: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> addPayment(Payment payment) async {
+    try {
+      payment.id = DateTime.now().millisecondsSinceEpoch;
+      payment.isSynced = false;
+      payment.createdAt = DateTime.now();
+      payment.updatedAt = DateTime.now();
+      payment.userId = _supabase.auth.currentUser?.id;
+
+      await _paymentsBox.put(payment.id.toString(), payment);
+
+      if (await ConnectivityService.isConnected()) {
+        try {
+          final response = await _supabase.from('payments').insert({
+            'customer_id': payment.customerId,
+            'amount': payment.amount,
+            'date': payment.date.toIso8601String(),
+            'notes': payment.notes,
+            'reminder_date': payment.reminderDate?.toIso8601String(),
+            'created_at': payment.createdAt!.toIso8601String(),
+            'updated_at': payment.updatedAt!.toIso8601String(),
+            'user_id': payment.userId,
+            'reminder_sent': payment.reminderSent,
+            'is_synced': true,
+          }).select();
+
+          if (response != null && (response as List).isNotEmpty) {
+            final oldId = payment.id.toString();
+            payment.id = response[0]['id'];
+            payment.isSynced = true;
+
+            await _paymentsBox.delete(oldId);
+            await _paymentsBox.put(payment.id.toString(), payment);
+            debugPrint('تمت مزامنة الدفعة مع السيرفر');
+          }
+        } catch (e) {
+          debugPrint('خطأ في مزامنة الدفعة مع السيرفر: $e');
+        }
       }
     } catch (e) {
       debugPrint('خطأ في إضافة الدفعة: $e');
@@ -760,6 +880,58 @@ class DatabaseService {
           .toList();
     } catch (e) {
       debugPrint('خطأ في جلب جميع المدفوعات: $e');
+      return [];
+    }
+  }
+
+  Future<List<Customer>> getCustomers() async {
+    try {
+      // جلب العملاء المحليين أولاً
+      final localCustomers = _customersBox.values.toList();
+      debugPrint('عدد العملاء المحليين: ${localCustomers.length}');
+
+      // إذا كان متصلاً، نحاول جلب العملاء من السيرفر
+      if (await ConnectivityService.isConnected()) {
+        try {
+          final userId = _supabase.auth.currentUser?.id;
+          if (userId == null) throw Exception('المستخدم غير مسجل الدخول');
+
+          final response = await _supabase
+              .from('customers')
+              .select()
+              .eq('user_id', userId)
+              .eq('is_deleted', false)
+              .order('created_at');
+
+          final serverCustomers = (response as List).map((customer) {
+            final c = Customer.fromMap(customer);
+            // قراءة حالة المزامنة من السيرفر
+            c.isSynced = customer['is_synced'] ?? true;
+            debugPrint('العميل ${c.name} - حالة المزامنة: ${c.isSynced}');
+            return c;
+          }).toList();
+          debugPrint('عدد العملاء من السيرفر: ${serverCustomers.length}');
+
+          // تحديث التخزين المحلي مع البيانات من السيرفر
+          await _customersBox.clear(); // مسح البيانات المحلية القديمة
+          for (var customer in serverCustomers) {
+            await _customersBox.put(customer.id.toString(), customer);
+            debugPrint(
+                'تم تحديث العميل ${customer.name} (ID: ${customer.id}) - مزامن: ${customer.isSynced}');
+          }
+
+          return serverCustomers;
+        } catch (e) {
+          debugPrint('خطأ في جلب العملاء من السيرفر: $e');
+          // في حالة الخطأ، نعيد العملاء المحليين
+          return localCustomers;
+        }
+      } else {
+        debugPrint('لا يوجد اتصال بالإنترنت، استخدام البيانات المحلية');
+        return localCustomers;
+      }
+    } catch (e) {
+      debugPrint('خطأ في جلب العملاء: $e');
       return [];
     }
   }

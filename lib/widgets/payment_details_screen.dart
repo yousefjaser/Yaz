@@ -668,8 +668,23 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
       textDirection: TextDirection.rtl,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('تفاصيل الدفعة'),
-          elevation: 0,
+          title: Row(
+            children: [
+              const Text('تفاصيل الدفعة'),
+              if (!widget.payment.isSynced) ...[
+                const SizedBox(width: 8),
+                const Tooltip(
+                  message: 'في انتظار المزامنة',
+                  child: Icon(
+                    Icons.cloud_upload,
+                    size: 16,
+                    color: Colors.orange,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          centerTitle: true,
         ),
         body: _isLoading
             ? const Center(child: CircularProgressIndicator())
@@ -761,82 +776,109 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                             const Divider(height: 24),
                             ListTile(
                               contentPadding: EdgeInsets.zero,
-                              leading: CircleAvatar(
-                                backgroundColor: widget.payment.amount >= 0
-                                    ? Colors.green.withOpacity(0.2)
-                                    : Colors.red.withOpacity(0.2),
-                                child: Icon(
-                                  widget.payment.amount >= 0
-                                      ? Icons.arrow_upward
-                                      : Icons.arrow_downward,
-                                  color: widget.payment.amount >= 0
-                                      ? Colors.green
-                                      : Colors.red,
-                                ),
+                              leading: Stack(
+                                children: [
+                                  CircleAvatar(
+                                    backgroundColor: widget.payment.amount > 0
+                                        ? Colors.green[100]
+                                        : Colors.red[100],
+                                    child: Icon(
+                                      widget.payment.amount > 0
+                                          ? Icons.arrow_upward
+                                          : Icons.arrow_downward,
+                                      color: widget.payment.amount > 0
+                                          ? Colors.green
+                                          : Colors.red,
+                                    ),
+                                  ),
+                                  if (!widget.payment.isSynced)
+                                    Positioned(
+                                      right: 0,
+                                      bottom: 0,
+                                      child: Container(
+                                        padding: const EdgeInsets.all(2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.orange,
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                        ),
+                                        child: const Icon(
+                                          Icons.sync,
+                                          size: 12,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                ],
                               ),
                               title: Text(
-                                'نوع المعاملة',
-                                style: TextStyle(
-                                  color:
-                                      Theme.of(context).colorScheme.onSurface,
+                                widget.payment.title ??
+                                    (widget.payment.amount > 0
+                                        ? 'دفعة'
+                                        : 'دين'),
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
-                              subtitle: Text(
-                                widget.payment.amount >= 0 ? 'دفعة' : 'دين',
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'التاريخ: ${_formatDateTime(widget.payment.date)}',
+                                    style: const TextStyle(fontSize: 14),
+                                  ),
+                                  if (!widget.payment.isSynced)
+                                    const Text(
+                                      'في انتظار المزامنة مع السيرفر',
+                                      style: TextStyle(
+                                        color: Colors.orange,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              trailing: Text(
+                                '${widget.payment.amount.abs().toStringAsFixed(2)} ₪',
                                 style: TextStyle(
-                                  color: widget.payment.amount >= 0
+                                  color: widget.payment.amount > 0
                                       ? Colors.green
                                       : Colors.red,
+                                  fontSize: 18,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
                             ),
-                            ListTile(
-                              contentPadding: EdgeInsets.zero,
-                              leading: Icon(Icons.calendar_today,
-                                  color:
-                                      Theme.of(context).colorScheme.secondary),
-                              title: Text(
-                                'تاريخ الاستحقاق',
+                            if (widget.payment.notes?.isNotEmpty ?? false) ...[
+                              const SizedBox(height: 16),
+                              const Text(
+                                'ملاحظات:',
                                 style: TextStyle(
-                                  color:
-                                      Theme.of(context).colorScheme.onSurface,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
-                              subtitle: Text(
-                                _formatDate(widget.payment.date),
-                                style: TextStyle(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurface
-                                      .withOpacity(0.7),
-                                ),
-                              ),
-                            ),
-                            if (widget.payment.notes != null)
-                              ListTile(
-                                contentPadding: EdgeInsets.zero,
-                                leading: Icon(Icons.note,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .secondary),
-                                title: Text(
-                                  'ملاحظات',
-                                  style: TextStyle(
-                                    color:
-                                        Theme.of(context).colorScheme.onSurface,
-                                  ),
-                                ),
-                                subtitle: Text(
-                                  widget.payment.notes!,
-                                  style: TextStyle(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurface
-                                        .withOpacity(0.7),
+                              Card(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(16),
+                                  child: Text(
+                                    widget.payment.notes!,
+                                    style: const TextStyle(fontSize: 14),
                                   ),
                                 ),
                               ),
+                            ],
+                            if (widget.payment.reminderDate != null) ...[
+                              const SizedBox(height: 16),
+                              Card(
+                                child: ListTile(
+                                  leading: const Icon(Icons.alarm),
+                                  title: const Text('موعد التذكير'),
+                                  subtitle: Text(_formatDateTime(
+                                      widget.payment.reminderDate!)),
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ),

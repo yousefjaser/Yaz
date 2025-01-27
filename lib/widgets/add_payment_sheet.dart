@@ -219,8 +219,8 @@ class _AddPaymentSheetState extends State<AddPaymentSheet> {
       customerId: widget.customer.id!,
       amount: _isDebt ? -amount : amount,
       date: _selectedDate,
-      notes: _notesController.text.isEmpty ? null : _notesController.text,
-      reminderDate: _reminderDate,
+      notes: _notesController.text.trim(),
+      reminderDate: _setReminder ? _reminderDate : null,
       reminderSent: false,
       title: _titleController.text.isEmpty ? null : _titleController.text,
     );
