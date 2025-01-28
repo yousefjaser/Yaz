@@ -198,7 +198,7 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
 
             if (success) {
               // تحديث حالة التذكير في Supabase
-              final reminderService = ReminderService(Supabase.instance.client);
+              final reminderService = await ReminderService.getInstance();
               await reminderService.markReminderAsCompleted(reminder.id);
             }
 
@@ -319,13 +319,13 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
       );
 
       // حفظ التذكير في Supabase
-      final reminderService = ReminderService(Supabase.instance.client);
+      final reminderService = await ReminderService.getInstance();
       await reminderService.createReminder(reminder);
 
       // إضافة التذكير إلى القائمة المحلية
       setState(() {
         _scheduledReminders.add(ScheduledReminder(
-          id: reminder.id,
+          id: reminder.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
           scheduleDate: scheduleDate,
           isSent: false,
           hasError: false,
@@ -364,7 +364,7 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
       final reminder = _scheduledReminders[index];
 
       // حذف التذكير من Supabase
-      final reminderService = ReminderService(Supabase.instance.client);
+      final reminderService = await ReminderService.getInstance();
       await reminderService.deleteReminder(reminder.id);
 
       setState(() {

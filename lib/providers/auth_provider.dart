@@ -7,6 +7,7 @@ class AuthProvider extends ChangeNotifier {
   bool _isLoading = false;
   String _loadingMessage = 'جاري التحميل...';
   bool _isAuthenticated = false;
+  Map<String, dynamic>? _userProfile;
 
   bool get isLoading => _isLoading;
   String get loadingMessage => _loadingMessage;
@@ -227,22 +228,33 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> updateUserProfile({String? name, String? phone}) async {
+  Future<void> updateUserProfile({
+    String? name,
+    String? phone,
+    String? businessName,
+    String? address,
+    String? themeMode,
+    String? language,
+    bool? notificationsEnabled,
+  }) async {
     try {
-      final user = _supabase.auth.currentUser;
-      if (user == null) throw 'لم يتم تسجيل الدخول';
-
-      // تحديث جدول profiles
-      await _supabase.from('profiles').upsert({
-        'id': user.id,
-        'name': name,
-        'email': user.email,
-        'phone': phone != null ? phone.substring(1) : null, // حذف الـ 0 من بداية الرقم
+      final response = await _supabase.from('profiles').upsert({
+        'id': currentUser?.id,
+        'updated_at': DateTime.now().toIso8601String(),
+        if (name != null) 'name': name,
+        if (phone != null) 'phone': phone,
+        if (businessName != null) 'business_name': businessName,
+        if (address != null) 'address': address,
+        if (themeMode != null) 'theme_mode': themeMode,
+        if (language != null) 'language': language,
+        if (notificationsEnabled != null)
+          'notifications_enabled': notificationsEnabled,
       });
 
+      await loadUserProfile();
       notifyListeners();
     } catch (e) {
-      throw 'حدث خطأ في تحديث الملف الشخصي: $e';
+      throw Exception('فشل تحديث الملف الشخصي: $e');
     }
   }
 
@@ -261,6 +273,21 @@ class AuthProvider extends ChangeNotifier {
     } catch (e) {
       debugPrint('خطأ في جلب معلومات المستخدم: $e');
       return null;
+    }
+  }
+
+  Future<void> loadUserProfile() async {
+    try {
+      final user = _supabase.auth.currentUser;
+      if (user == null) return;
+
+      final response =
+          await _supabase.from('profiles').select().eq('id', user.id).single();
+
+      _userProfile = response;
+      notifyListeners();
+    } catch (e) {
+      print('خطأ في تحميل الملف الشخصي: $e');
     }
   }
 }

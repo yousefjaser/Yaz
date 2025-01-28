@@ -228,7 +228,7 @@ class _TrashScreenState extends State<TrashScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  payment.customerName,
+                                  payment.customerName ?? 'عميل غير معروف',
                                   style: const TextStyle(
                                       fontWeight: FontWeight.bold),
                                 ),

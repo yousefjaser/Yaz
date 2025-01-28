@@ -6,6 +6,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:yaz/models/payment.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:hive/hive.dart';
+import 'package:yaz/services/connectivity_service.dart';
 
 class CustomersProvider extends ChangeNotifier {
   final DatabaseService _databaseService;
@@ -24,6 +25,9 @@ class CustomersProvider extends ChangeNotifier {
   List<Customer> get deletedCustomers => _deletedCustomers;
   List<Payment> get deletedPayments => _deletedPayments;
   bool get isInitialized => _isInitialized;
+
+  // قائمة العملاء التي تنتظر المزامنة
+  final List<Customer> _syncQueue = [];
 
   CustomersProvider(this._databaseService) {
     debugPrint('تم إنشاء CustomersProvider');
@@ -168,27 +172,32 @@ class CustomersProvider extends ChangeNotifier {
 
   Future<void> addCustomer(Customer customer) async {
     try {
-      // إضافة العميل إلى قاعدة البيانات
-      await _databaseService.addCustomer(customer);
+      // إضافة العميل محلياً أولاً
+      final box = await Hive.openBox<Customer>('customers');
+      final id = DateTime.now().millisecondsSinceEpoch;
+      customer.id = id;
+      customer.isSynced = false; // تعيين حالة المزامنة إلى false
+      await box.put(id.toString(), customer);
 
-      // تحديث القائمة المحلية مباشرة
+      // محاولة المزامنة مع السيرفر إذا كان هناك اتصال
+      if (await ConnectivityService.isConnected()) {
+        try {
+          await _databaseService.addCustomer(customer);
+          customer.isSynced = true;
+          await box.put(customer.id.toString(), customer);
+        } catch (e) {
+          debugPrint('خطأ في حفظ العميل على السيرفر: $e');
+          // لا نقوم برمي الخطأ هنا لأن العميل تم حفظه محلياً
+        }
+      }
+
+      // تحديث القائمة المحلية
       _customers.add(customer);
-      _applyFilters(); // تحديث القائمة المفلترة
+      _applyFilters();
       notifyListeners();
-
-      // إعادة تحميل العملاء لضمان التزامن
-      await loadCustomers();
     } catch (e) {
       debugPrint('خطأ في إضافة العميل: $e');
-      // حتى في حالة الخطأ، إذا تم الحفظ محلياً نقوم بإضافته للقائمة
-      if (!_customers.contains(customer)) {
-        _customers.add(customer);
-        _applyFilters();
-        notifyListeners();
-      }
-      if (!e.toString().contains('تم حفظ العميل محلياً')) {
-        rethrow;
-      }
+      rethrow;
     }
   }
 
@@ -334,5 +343,71 @@ class CustomersProvider extends ChangeNotifier {
   void removeCustomer(Customer customer) {
     _customers.remove(customer);
     notifyListeners();
+  }
+
+  // إضافة عميل إلى قائمة المزامنة
+  Future<void> addToSyncQueue(Customer customer) async {
+    _syncQueue.add(customer);
+    await _saveCustomerLocally(customer);
+    notifyListeners();
+  }
+
+  // حفظ العميل محلياً
+  Future<void> _saveCustomerLocally(Customer customer) async {
+    try {
+      final db = await DatabaseService.getInstance();
+      await db.updateCustomer(customer);
+    } catch (e) {
+      print('خطأ في الحفظ المحلي: $e');
+      throw e;
+    }
+  }
+
+  // مزامنة العملاء عند توفر الاتصال
+  Future<void> syncCustomers() async {
+    if (_syncQueue.isEmpty) return;
+
+    try {
+      for (var customer in _syncQueue) {
+        await updateCustomer(customer.copyWith(isSynced: true));
+      }
+      _syncQueue.clear();
+      notifyListeners();
+    } catch (e) {
+      print('خطأ في المزامنة: $e');
+      throw e;
+    }
+  }
+
+  // التحقق من وجود عملاء في انتظار المزامنة
+  bool get hasPendingSync => _syncQueue.isNotEmpty;
+
+  // الحصول على عدد العملاء في انتظار المزامنة
+  int get pendingSyncCount => _syncQueue.length;
+
+  Future<List<Customer>> getCustomers() async {
+    try {
+      final response = await Supabase.instance.client
+          .from('customers')
+          .select()
+          .eq('user_id', Supabase.instance.client.auth.currentUser!.id)
+          .order('name');
+
+      return (response as List).map((data) => Customer.fromMap(data)).toList();
+    } catch (e) {
+      debugPrint('خطأ في جلب العملاء: $e');
+      return [];
+    }
+  }
+
+  // إضافة دالة للحصول على عميل محدد
+  Future<Customer?> getCustomer(int customerId) async {
+    try {
+      final box = await Hive.openBox<Customer>('customers');
+      return box.get(customerId.toString());
+    } catch (e) {
+      debugPrint('خطأ في جلب العميل: $e');
+      return null;
+    }
   }
 }

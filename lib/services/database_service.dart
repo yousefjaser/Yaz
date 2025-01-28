@@ -545,8 +545,15 @@ class DatabaseService with ChangeNotifier {
   }
 
   Future<List<Customer>> getAllLocalCustomers() async {
-    final box = await Hive.openBox<Customer>('customers');
-    return box.values.toList();
+    try {
+      final box = await Hive.openBox<Customer>('customers');
+      final customers = box.values.toList();
+      debugPrint('تم تحميل ${customers.length} عميل من التخزين المحلي');
+      return customers;
+    } catch (e) {
+      debugPrint('خطأ في تحميل العملاء المحليين: $e');
+      return [];
+    }
   }
 
   Future<void> movePaymentToTrash(Payment payment) async {
@@ -865,21 +872,23 @@ class DatabaseService with ChangeNotifier {
   }
 
   Future<List<Payment>> getAllPayments() async {
-    final userId = _supabase.auth.currentUser?.id;
-    if (userId == null) throw Exception('المستخدم غير مسجل الدخول');
-
     try {
+      final userId = _supabase.auth.currentUser?.id;
+      if (userId == null) throw Exception('المستخدم غير مسجل الدخول');
+
       final response = await _supabase
           .from('payments')
-          .select('*, customers(*)')
-          .eq('user_id', userId)
-          .order('date', ascending: false);
+          .select()
+          .eq('is_deleted', false)
+          .order('created_at');
 
-      return (response as List)
-          .map((payment) => Payment.fromJson(payment))
-          .toList();
+      return (response as List).map((payment) {
+        final p = Payment.fromMap(payment);
+        p.isSynced = payment['is_synced'] ?? true;
+        return p;
+      }).toList();
     } catch (e) {
-      debugPrint('خطأ في جلب جميع المدفوعات: $e');
+      debugPrint('خطأ في جلب الدفعات: $e');
       return [];
     }
   }
@@ -887,7 +896,7 @@ class DatabaseService with ChangeNotifier {
   Future<List<Customer>> getCustomers() async {
     try {
       // جلب العملاء المحليين أولاً
-      final localCustomers = _customersBox.values.toList();
+      final localCustomers = await getAllLocalCustomers();
       debugPrint('عدد العملاء المحليين: ${localCustomers.length}');
 
       // إذا كان متصلاً، نحاول جلب العملاء من السيرفر
@@ -903,27 +912,50 @@ class DatabaseService with ChangeNotifier {
               .eq('is_deleted', false)
               .order('created_at');
 
-          final serverCustomers = (response as List).map((customer) {
-            final c = Customer.fromMap(customer);
-            // قراءة حالة المزامنة من السيرفر
-            c.isSynced = customer['is_synced'] ?? true;
-            debugPrint('العميل ${c.name} - حالة المزامنة: ${c.isSynced}');
-            return c;
-          }).toList();
-          debugPrint('عدد العملاء من السيرفر: ${serverCustomers.length}');
+          if (response != null && (response as List).isNotEmpty) {
+            final serverCustomers = response.map((customer) {
+              final c = Customer.fromMap(customer);
+              c.isSynced = true;
+              debugPrint('العميل ${c.name} - حالة المزامنة: ${c.isSynced}');
+              return c;
+            }).toList();
 
-          // تحديث التخزين المحلي مع البيانات من السيرفر
-          await _customersBox.clear(); // مسح البيانات المحلية القديمة
-          for (var customer in serverCustomers) {
-            await _customersBox.put(customer.id.toString(), customer);
-            debugPrint(
-                'تم تحديث العميل ${customer.name} (ID: ${customer.id}) - مزامن: ${customer.isSynced}');
+            debugPrint('عدد العملاء من السيرفر: ${serverCustomers.length}');
+
+            try {
+              // حفظ العملاء في التخزين المحلي
+              final box = await Hive.openBox<Customer>('customers');
+
+              // حفظ العملاء الجدد أولاً قبل مسح القديمة
+              for (var customer in serverCustomers) {
+                await box.put(customer.id.toString(), customer);
+                debugPrint(
+                    'تم حفظ العميل ${customer.name} (ID: ${customer.id}) محلياً');
+              }
+
+              // مسح أي عملاء قديمة غير موجودة في السيرفر
+              final serverIds =
+                  serverCustomers.map((c) => c.id.toString()).toSet();
+              final localIds = box.keys.toSet();
+              final idsToDelete = localIds.difference(serverIds);
+
+              for (var id in idsToDelete) {
+                await box.delete(id);
+                debugPrint('تم حذف العميل المحلي برقم $id');
+              }
+
+              return serverCustomers;
+            } catch (e) {
+              debugPrint('خطأ في حفظ العملاء محلياً: $e');
+              // في حالة فشل الحفظ المحلي، نرجع العملاء من السيرفر على الأقل
+              return serverCustomers;
+            }
+          } else {
+            debugPrint('لا يوجد عملاء في السيرفر، استخدام البيانات المحلية');
+            return localCustomers;
           }
-
-          return serverCustomers;
         } catch (e) {
           debugPrint('خطأ في جلب العملاء من السيرفر: $e');
-          // في حالة الخطأ، نعيد العملاء المحليين
           return localCustomers;
         }
       } else {
@@ -933,6 +965,51 @@ class DatabaseService with ChangeNotifier {
     } catch (e) {
       debugPrint('خطأ في جلب العملاء: $e');
       return [];
+    }
+  }
+
+  Future<Map<String, dynamic>> savePayment(Payment payment) async {
+    try {
+      final data = {
+        'customer_id': payment.customerId,
+        'amount': payment.amount,
+        'date': payment.date.toIso8601String(),
+        'notes': payment.notes,
+        'reminder_date': payment.reminderDate?.toIso8601String(),
+        'reminder_sent': payment.reminderSent ?? false,
+        'created_at': DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+        'is_deleted': false,
+        'deleted_at': null,
+        'title': payment.title,
+        'reminder_sent_at': null,
+        'is_synced': true,
+      };
+
+      final response =
+          await _supabase.from('payments').insert(data).select().single();
+      return response as Map<String, dynamic>;
+    } catch (e) {
+      debugPrint('خطأ في حفظ الدفعة: $e');
+      rethrow;
+    }
+  }
+
+  Future<Customer?> getCustomer(int customerId) async {
+    try {
+      final response = await _supabase
+          .from('customers')
+          .select()
+          .eq('id', customerId)
+          .single();
+
+      if (response != null) {
+        return Customer.fromMap(response);
+      }
+      return null;
+    } catch (e) {
+      print('خطأ في جلب العميل: $e');
+      return null;
     }
   }
 }

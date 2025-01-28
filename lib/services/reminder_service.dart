@@ -6,14 +6,41 @@ import 'package:yaz/main.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/reminder.dart';
+import 'package:yaz/models/payment.dart';
+import 'package:yaz/models/customer.dart';
+import 'package:yaz/services/local_storage_service.dart';
 
 class ReminderService {
   static const String reminderTask = 'payment_reminder';
   final SupabaseClient _supabase;
+  final LocalStorageService storage;
+  final DatabaseService database;
+  static ReminderService? _instance;
 
-  ReminderService(this._supabase);
+  ReminderService._({
+    required this.storage,
+    required this.database,
+    required SupabaseClient supabase,
+  }) : _supabase = supabase;
 
-  Future<void> initialize() async {
+  static Future<ReminderService> getInstance() async {
+    if (_instance == null) {
+      final storage = await LocalStorageService.getInstance();
+      final database = await DatabaseService.getInstance();
+      final supabase = Supabase.instance.client;
+
+      _instance = ReminderService._(
+        storage: storage,
+        database: database,
+        supabase: supabase,
+      );
+
+      await _instance!._initialize();
+    }
+    return _instance!;
+  }
+
+  Future<void> _initialize() async {
     debugPrint('تهيئة خدمة التذكير...');
     try {
       await Workmanager().initialize(

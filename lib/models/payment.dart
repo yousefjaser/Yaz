@@ -4,59 +4,52 @@ import 'package:meta/meta.dart';
 
 part 'payment.g.dart';
 
-@HiveType(typeId: 1)
-class Payment extends HiveObject {
+@HiveType(typeId: 2)
+class Payment {
   @HiveField(0)
   int? id;
 
   @HiveField(1)
-  int customerId;
+  final int customerId;
 
   @HiveField(2)
-  double amount;
+  final double amount;
 
   @HiveField(3)
-  DateTime date;
+  final DateTime date;
 
   @HiveField(4)
-  String? notes;
+  final String? notes;
 
   @HiveField(5)
-  DateTime? reminderDate;
+  final DateTime? reminderDate;
 
   @HiveField(6)
-  bool isDeleted;
+  bool? reminderSent;
 
   @HiveField(7)
-  String? title;
-
-  @HiveField(8)
-  bool isSynced;
-
-  @HiveField(9)
   DateTime? createdAt;
 
-  @HiveField(10)
+  @HiveField(8)
   DateTime? updatedAt;
 
+  @HiveField(9)
+  bool isDeleted;
+
+  @HiveField(10)
+  DateTime? deletedAt;
+
   @HiveField(11)
-  String? userId;
+  String? title;
 
   @HiveField(12)
-  @protected
-  String? customerJson;
+  DateTime? reminderSentAt;
 
   @HiveField(13)
-  bool reminderSent;
+  bool isSynced;
 
-  Map<String, dynamic>? get customer =>
-      customerJson != null ? json.decode(customerJson!) : null;
-
-  set customer(Map<String, dynamic>? value) {
-    customerJson = value != null ? json.encode(value) : null;
-  }
-
-  String get customerName => customer?['name'] ?? 'عميل غير معروف';
+  @HiveField(14)
+  String? userId;
 
   Payment({
     this.id,
@@ -65,64 +58,67 @@ class Payment extends HiveObject {
     required this.date,
     this.notes,
     this.reminderDate,
-    this.isDeleted = false,
-    this.title,
-    this.isSynced = false,
+    this.reminderSent = false,
     this.createdAt,
     this.updatedAt,
+    this.isDeleted = false,
+    this.deletedAt,
+    this.title,
+    this.reminderSentAt,
+    this.isSynced = false,
     this.userId,
-    Map<String, dynamic>? customer,
-    this.reminderSent = false,
-  }) {
-    if (customer != null) {
-      this.customer = customer;
-    }
-  }
+  });
 
   Map<String, dynamic> toMap() {
     return {
       'id': id,
-      'customer_id': customerId.toString(),
+      'customer_id': customerId,
       'amount': amount,
       'date': date.toIso8601String(),
       'notes': notes,
       'reminder_date': reminderDate?.toIso8601String(),
-      'is_deleted': isDeleted ? 1 : 0,
-      'title': title,
+      'reminder_sent': reminderSent,
       'created_at': createdAt?.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
+      'is_deleted': isDeleted,
+      'deleted_at': deletedAt?.toIso8601String(),
+      'title': title,
+      'reminder_sent_at': reminderSentAt?.toIso8601String(),
+      'is_synced': isSynced,
       'user_id': userId,
     };
   }
 
   factory Payment.fromMap(Map<String, dynamic> map) {
-    int parseCustomerId(dynamic value) {
-      if (value == null) throw Exception('معرف العميل مطلوب');
-      if (value is int) return value;
-      if (value is String) return int.parse(value);
-      throw Exception('نوع معرف العميل غير صالح');
-    }
-
     return Payment(
-      id: map['id'] != null ? int.parse(map['id'].toString()) : null,
-      customerId: parseCustomerId(map['customer_id']),
-      amount: (map['amount'] as num).toDouble(),
+      id: map['id'],
+      customerId: map['customer_id'],
+      amount: map['amount']?.toDouble() ?? 0.0,
       date: DateTime.parse(map['date']),
       notes: map['notes'],
       reminderDate: map['reminder_date'] != null
           ? DateTime.parse(map['reminder_date'])
           : null,
-      isDeleted: map['is_deleted'] == 1 || map['is_deleted'] == true,
-      title: map['title'],
-      isSynced: true,
+      reminderSent: map['reminder_sent'] ?? false,
       createdAt:
           map['created_at'] != null ? DateTime.parse(map['created_at']) : null,
       updatedAt:
           map['updated_at'] != null ? DateTime.parse(map['updated_at']) : null,
+      isDeleted: map['is_deleted'] ?? false,
+      deletedAt:
+          map['deleted_at'] != null ? DateTime.parse(map['deleted_at']) : null,
+      title: map['title'],
+      reminderSentAt: map['reminder_sent_at'] != null
+          ? DateTime.parse(map['reminder_sent_at'])
+          : null,
+      isSynced: map['is_synced'] ?? false,
       userId: map['user_id'],
-      customer: map['customers'],
     );
   }
+
+  Map<String, dynamic> toJson() => toMap();
+
+  factory Payment.fromJson(Map<String, dynamic> json) => Payment.fromMap(json);
 
   Payment copyWith({
     int? id,
@@ -131,13 +127,15 @@ class Payment extends HiveObject {
     DateTime? date,
     String? notes,
     DateTime? reminderDate,
-    bool? isDeleted,
-    String? title,
-    bool? isSynced,
+    bool? reminderSent,
     DateTime? createdAt,
     DateTime? updatedAt,
+    bool? isDeleted,
+    DateTime? deletedAt,
+    String? title,
+    DateTime? reminderSentAt,
+    bool? isSynced,
     String? userId,
-    Map<String, dynamic>? customer,
   }) {
     return Payment(
       id: id ?? this.id,
@@ -146,60 +144,17 @@ class Payment extends HiveObject {
       date: date ?? this.date,
       notes: notes ?? this.notes,
       reminderDate: reminderDate ?? this.reminderDate,
-      isDeleted: isDeleted ?? this.isDeleted,
-      title: title ?? this.title,
-      isSynced: isSynced ?? this.isSynced,
+      reminderSent: reminderSent ?? this.reminderSent,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      isDeleted: isDeleted ?? this.isDeleted,
+      deletedAt: deletedAt ?? this.deletedAt,
+      title: title ?? this.title,
+      reminderSentAt: reminderSentAt ?? this.reminderSentAt,
+      isSynced: isSynced ?? this.isSynced,
       userId: userId ?? this.userId,
-      customer: customer ?? this.customer,
     );
   }
 
-  factory Payment.fromJson(Map<String, dynamic> json) {
-    int parseCustomerId(dynamic value) {
-      if (value == null) throw Exception('معرف العميل مطلوب');
-      if (value is int) return value;
-      if (value is String) return int.parse(value);
-      throw Exception('نوع معرف العميل غير صالح');
-    }
-
-    return Payment(
-      id: json['id'] != null ? int.parse(json['id'].toString()) : null,
-      customerId: parseCustomerId(json['customer_id']),
-      amount: double.parse(json['amount'].toString()),
-      date: DateTime.parse(json['date']),
-      notes: json['notes'],
-      reminderDate: json['reminder_date'] != null
-          ? DateTime.parse(json['reminder_date'])
-          : null,
-      isDeleted: json['is_deleted'] ?? false,
-      title: json['title'],
-      isSynced: true,
-      createdAt: json['created_at'] != null
-          ? DateTime.parse(json['created_at'])
-          : null,
-      updatedAt: json['updated_at'] != null
-          ? DateTime.parse(json['updated_at'])
-          : null,
-      userId: json['user_id'],
-      customer: json['customers'],
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'customer_id': customerId.toString(),
-      'amount': amount,
-      'date': date.toIso8601String(),
-      'notes': notes,
-      'reminder_date': reminderDate?.toIso8601String(),
-      'is_deleted': isDeleted,
-      'title': title,
-      'created_at': createdAt?.toIso8601String(),
-      'updated_at': updatedAt?.toIso8601String(),
-      'user_id': userId,
-    };
-  }
+  String? get customerName => null; // سيتم تعبئته من قاعدة البيانات
 }

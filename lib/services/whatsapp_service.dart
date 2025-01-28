@@ -89,8 +89,9 @@ class WhatsAppService {
     String? customMessage,
   }) async {
     try {
-      final defaultMessage = 'السلام عليكم @الاسم،\nنود تذكيركم بموعد استحقاق @النوع بقيمة @المبلغ في تاريخ @التاريخ';
-      
+      final defaultMessage =
+          'السلام عليكم @الاسم،\nنود تذكيركم بموعد استحقاق @النوع بقيمة @المبلغ في تاريخ @التاريخ';
+
       // استبدال المتغيرات في الرسالة
       final finalMessage = _replaceMessageVariables(
         message: customMessage ?? defaultMessage,
@@ -99,7 +100,7 @@ class WhatsAppService {
         amount: amount,
         date: dueDate,
       );
-      
+
       // إرسال الرسالة عبر API
       return sendMessage(
         phoneNumber: phoneNumber,
@@ -133,10 +134,10 @@ class WhatsAppService {
     final paymentType = amount >= 0 ? 'دفعة' : 'دين';
 
     return message
-      .replaceAll('@الاسم', customerName)
-      .replaceAll('@الرقم', phoneNumber)
-      .replaceAll('@المبلغ', formattedAmount)
-      .replaceAll('@التاريخ', formattedDate)
-      .replaceAll('@النوع', paymentType);
+        .replaceAll('@الاسم', customerName)
+        .replaceAll('@الرقم', phoneNumber)
+        .replaceAll('@المبلغ', formattedAmount)
+        .replaceAll('@التاريخ', formattedDate)
+        .replaceAll('@النوع', paymentType);
   }
 }

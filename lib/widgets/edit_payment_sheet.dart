@@ -28,6 +28,10 @@ class _EditPaymentSheetState extends State<EditPaymentSheet> {
   final _notesController = TextEditingController();
   late DateTime _selectedDate;
   bool _isDebt = false;
+  bool _isSaving = false;
+  bool _setReminder = false;
+  DateTime? _reminderDate;
+  final _titleController = TextEditingController();
 
   @override
   void initState() {
@@ -42,21 +46,25 @@ class _EditPaymentSheetState extends State<EditPaymentSheet> {
   void dispose() {
     _amountController.dispose();
     _notesController.dispose();
+    _titleController.dispose();
     super.dispose();
   }
 
-  Future<void> _updatePayment() async {
+  Future<void> _savePayment() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final amount = double.parse(_amountController.text);
-    final updatedPayment = widget.payment.copyWith(
-      amount: _isDebt ? -amount : amount,
-      date: _selectedDate,
-      notes: _notesController.text.isEmpty ? null : _notesController.text,
-    );
+    setState(() => _isSaving = true);
 
     try {
       final db = await DatabaseService.getInstance();
+      final updatedPayment = widget.payment.copyWith(
+        amount: double.parse(_amountController.text) * (_isDebt ? -1 : 1),
+        date: _selectedDate,
+        notes: _notesController.text.trim(),
+        reminderDate: _setReminder ? _reminderDate : null,
+        title: _titleController.text.trim(),
+      );
+
       await db.updatePayment(updatedPayment);
 
       if (!mounted) return;
@@ -70,6 +78,8 @@ class _EditPaymentSheetState extends State<EditPaymentSheet> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('خطأ في تحديث الدفعة: $e')),
       );
+    } finally {
+      setState(() => _isSaving = false);
     }
   }
 
@@ -163,7 +173,7 @@ class _EditPaymentSheetState extends State<EditPaymentSheet> {
               ),
               const SizedBox(height: 16),
               ElevatedButton(
-                onPressed: _updatePayment,
+                onPressed: _savePayment,
                 child: const Text('حفظ التعديلات'),
               ),
               const SizedBox(height: 16),

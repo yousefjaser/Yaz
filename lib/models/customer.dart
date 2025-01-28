@@ -86,16 +86,15 @@ class Customer extends HiveObject {
 
   factory Customer.fromMap(Map<String, dynamic> map) {
     return Customer(
-      id: int.parse(map['id'].toString()),
+      id: map['id'],
       name: map['name'] ?? '',
       phone: map['phone'] ?? '',
-      address: map['address'] ?? '',
-      notes: map['notes'] ?? '',
-      color: map['color'] ?? '#FF0000',
       balance: (map['balance'] ?? 0.0).toDouble(),
+      notes: map['notes'] ?? '',
+      createdAt: DateTime.parse(map['created_at']),
       userId: map['user_id'],
-      createdAt:
-          map['created_at'] != null ? DateTime.parse(map['created_at']) : null,
+      color: map['color'] ?? '#FF0000',
+      address: map['address'] ?? '',
       updatedAt:
           map['updated_at'] != null ? DateTime.parse(map['updated_at']) : null,
       isSynced: map['is_synced'] ?? true,

@@ -3,8 +3,71 @@ import 'package:path/path.dart';
 import '../models/customer.dart';
 import '../models/payment.dart';
 import '../models/reminder.dart';
+import 'package:hive/hive.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:flutter/foundation.dart';
 
 class LocalStorageService {
+  static LocalStorageService? _instance;
+  late Box<Reminder> _remindersBox;
+  bool _isInitialized = false;
+
+  LocalStorageService._();
+
+  static Future<LocalStorageService> getInstance() async {
+    if (_instance == null) {
+      _instance = LocalStorageService._();
+      await _instance!._initialize();
+    }
+    return _instance!;
+  }
+
+  Future<void> _initialize() async {
+    if (_isInitialized) return;
+
+    try {
+      debugPrint('تهيئة خدمة التخزين المحلي...');
+
+      if (!kIsWeb) {
+        final appDocumentDir = await getApplicationDocumentsDirectory();
+        Hive.init(appDocumentDir.path);
+      }
+
+      // تسجيل المحول
+      if (!Hive.isAdapterRegistered(3)) {
+        Hive.registerAdapter(ReminderAdapter());
+      }
+
+      // فتح صندوق التذكيرات
+      _remindersBox = await Hive.openBox<Reminder>('reminders');
+
+      _isInitialized = true;
+      debugPrint('تم تهيئة خدمة التخزين المحلي بنجاح');
+    } catch (e) {
+      debugPrint('خطأ في تهيئة خدمة التخزين المحلي: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> saveReminder(Reminder reminder) async {
+    await _remindersBox.put(reminder.id.toString(), reminder);
+  }
+
+  Future<void> deleteReminder(String reminderId) async {
+    await _remindersBox.delete(reminderId);
+  }
+
+  List<Reminder> getReminders() {
+    return _remindersBox.values.toList();
+  }
+
+  Future<void> dispose() async {
+    if (_remindersBox.isOpen) {
+      await _remindersBox.close();
+    }
+    _isInitialized = false;
+  }
+
   static Database? _database;
 
   static Future<Database> get database async {

@@ -1,42 +1,54 @@
-import 'package:uuid/uuid.dart';
+import 'package:hive/hive.dart';
 
+part 'reminder.g.dart';
+
+@HiveType(typeId: 3)
 class Reminder {
-  final String id;
+  @HiveField(0)
+  String? id;
+
+  @HiveField(1)
   final int customerId;
+
+  @HiveField(2)
   final DateTime reminderDate;
+
+  @HiveField(3)
   final String message;
+
+  @HiveField(4)
   bool isCompleted;
-  final DateTime createdAt;
 
   Reminder({
-    String? id,
+    this.id,
     required this.customerId,
     required this.reminderDate,
     required this.message,
     this.isCompleted = false,
-    DateTime? createdAt,
-  })  : id = id ?? const Uuid().v4(),
-        createdAt = createdAt ?? DateTime.now();
+  });
 
-  Map<String, dynamic> toJson() {
+  Map<String, dynamic> toMap() {
     return {
       'id': id,
       'customer_id': customerId,
       'reminder_date': reminderDate.toIso8601String(),
       'message': message,
       'is_completed': isCompleted,
-      'created_at': createdAt.toIso8601String(),
     };
   }
 
-  factory Reminder.fromJson(Map<String, dynamic> json) {
+  factory Reminder.fromMap(Map<String, dynamic> map) {
     return Reminder(
-      id: json['id'],
-      customerId: json['customer_id'] as int,
-      reminderDate: DateTime.parse(json['reminder_date']),
-      message: json['message'],
-      isCompleted: json['is_completed'],
-      createdAt: DateTime.parse(json['created_at']),
+      id: map['id']?.toString(),
+      customerId: map['customer_id'],
+      reminderDate: DateTime.parse(map['reminder_date']),
+      message: map['message'],
+      isCompleted: map['is_completed'] ?? false,
     );
   }
+
+  Map<String, dynamic> toJson() => toMap();
+
+  factory Reminder.fromJson(Map<String, dynamic> json) =>
+      Reminder.fromMap(json);
 }
