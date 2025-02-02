@@ -36,18 +36,21 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
   }
 
   Future<void> _scheduleReminder(Payment payment) async {
-    final reminderService = await ReminderService.getInstance();
-    if (payment.reminderDate == null) return;
+    try {
+      final reminderService = await ReminderService.getInstance();
+      if (payment.reminderDate == null) {
+        throw Exception('لم يتم تحديد موعد التذكير');
+      }
 
-    final message = payment.notes?.isNotEmpty == true
-        ? payment.notes!
-        : 'تذكير بموعد السداد';
+      if (payment.id == null) {
+        throw Exception('معرف الدفعة غير موجود');
+      }
 
-    // ## await reminderService.schedulePaymentReminder(
-    // ##   payment,
-    // ##   widget.customer,
-    // ##   payment.reminderDate!,
-    // ## );
+      await reminderService.scheduleReminder(payment.id!, payment.reminderDate!);
+    } catch (e) {
+      debugPrint('خطأ في جدولة التذكير: $e');
+      rethrow;
+    }
   }
 
   Future<void> _handleAction(BuildContext context) async {

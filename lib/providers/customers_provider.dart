@@ -35,18 +35,29 @@ class CustomersProvider extends ChangeNotifier {
   }
 
   Future<void> _initializeData() async {
-    final session = Supabase.instance.client.auth.currentSession;
-    if (session != null) {
-      try {
+    try {
+      final session = Supabase.instance.client.auth.currentSession;
+      if (session != null && !session.isExpired) {
+        debugPrint('جلسة صالحة، جاري تحميل البيانات...');
         await loadCustomers();
-      } catch (e) {
-        debugPrint('خطأ في تحميل البيانات الأولية: $e');
+      } else {
+        debugPrint('لا توجد جلسة صالحة');
+        _customers = [];
+        _filteredCustomers = [];
       }
+    } catch (e) {
+      debugPrint('خطأ في تحميل البيانات الأولية: $e');
+      _customers = [];
+      _filteredCustomers = [];
     }
   }
 
   void updateAuth(AuthProvider authProvider) async {
     if (!authProvider.isAuthenticated) {
+      // حذف جميع البيانات المحلية عند تسجيل الخروج
+      final box = await Hive.openBox<Customer>('customers');
+      await box.clear();
+      
       _customers = [];
       _filteredCustomers = [];
       _deletedCustomers = [];
@@ -85,80 +96,42 @@ class CustomersProvider extends ChangeNotifier {
       debugPrint('بدء تحميل العملاء...');
 
       // فحص الاتصال بالإنترنت
-      final connectivityResult = await Connectivity().checkConnectivity();
-      debugPrint(
-          'حالة الاتصال بالإنترنت: ${connectivityResult == ConnectivityResult.none ? 'غير متصل' : 'متصل'}');
+      final isOnline = await isConnected();
+      debugPrint('حالة الاتصال بالإنترنت: ${isOnline ? 'متصل' : 'غير متصل'}');
 
-      // محاولة تحميل البيانات المحلية أولاً
-      try {
-        debugPrint('محاولة تحميل البيانات المحلية...');
-        _customers = await _databaseService.getAllLocalCustomers();
-        if (_customers.isNotEmpty) {
-          debugPrint('تم تحميل ${_customers.length} عميل من التخزين المحلي');
-          _applyFilters();
-        }
-      } catch (localError) {
-        debugPrint('خطأ في تحميل البيانات المحلية: $localError');
-      }
-
-      // إذا لم يكن هناك اتصال بالإنترنت، نكتفي بالبيانات المحلية
-      if (connectivityResult == ConnectivityResult.none) {
-        debugPrint('لا يوجد اتصال بالإنترنت، الاكتفاء بالبيانات المحلية');
+      // التأكد من وجود جلسة صالحة
+      final session = Supabase.instance.client.auth.currentSession;
+      if (session == null || session.isExpired) {
+        debugPrint('لا توجد جلسة صالحة، تخطي تحميل البيانات');
+        _customers = [];
+        _filteredCustomers = [];
         return;
       }
 
-      // التحقق من حالة المصادقة
-      final session = Supabase.instance.client.auth.currentSession;
-      if (session == null || session.isExpired) {
-        debugPrint('الجلسة منتهية، محاولة تجديد الجلسة...');
+      // تحميل البيانات من السيرفر إذا كان هناك اتصال
+      if (isOnline) {
         try {
-          final response = await Supabase.instance.client.auth.refreshSession();
-          if (response.session == null) {
-            throw Exception('فشل في تجديد الجلسة');
-          }
-          debugPrint('تم تجديد الجلسة بنجاح');
-        } catch (e) {
-          debugPrint('خطأ في تجديد الجلسة: $e');
-          if (_customers.isEmpty) {
-            throw Exception('لا يمكن تحميل البيانات: فشل في تجديد الجلسة');
-          }
-          return;
-        }
-      }
-
-      debugPrint('جاري تحميل العملاء من السيرفر...');
-
-      // محاولة تحميل البيانات مع إعادة المحاولة في حالة الفشل
-      for (int i = 0; i < 3; i++) {
-        try {
+          debugPrint('جلب البيانات من السيرفر...');
           final serverCustomers = await _databaseService.getAllCustomers();
-          if (serverCustomers.isNotEmpty) {
-            _customers = serverCustomers;
-            debugPrint('تم تحميل ${_customers.length} عميل من السيرفر');
-            _applyFilters();
-            return;
-          }
+          _customers = serverCustomers;
+          debugPrint('تم تحميل ${_customers.length} عميل من السيرفر');
         } catch (e) {
-          debugPrint('محاولة ${i + 1} فشلت: $e');
-          if (i < 2) {
-            debugPrint('انتظار قبل إعادة المحاولة...');
-            await Future.delayed(Duration(seconds: 2));
-            try {
-              await Supabase.instance.client.auth.refreshSession();
-              debugPrint('تم تجديد الجلسة قبل المحاولة التالية');
-            } catch (refreshError) {
-              debugPrint('فشل في تجديد الجلسة: $refreshError');
-            }
-          }
+          debugPrint('خطأ في تحميل البيانات من السيرفر: $e');
+          // في حالة الفشل، نحاول تحميل البيانات المحلية
+          _customers = await _databaseService.getAllLocalCustomers();
+          debugPrint('تم تحميل ${_customers.length} عميل من التخزين المحلي');
         }
+      } else {
+        // تحميل البيانات المحلية في حالة عدم وجود اتصال
+        _customers = await _databaseService.getAllLocalCustomers();
+        debugPrint('تم تحميل ${_customers.length} عميل من التخزين المحلي');
       }
 
-      if (_customers.isEmpty) {
-        throw Exception('فشل في تحميل البيانات من السيرفر والتخزين المحلي');
-      }
+      _applyFilters();
     } catch (e) {
       debugPrint('خطأ في تحميل العملاء: $e');
-      rethrow;
+      _customers = [];
+      _filteredCustomers = [];
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -172,29 +145,22 @@ class CustomersProvider extends ChangeNotifier {
 
   Future<void> addCustomer(Customer customer) async {
     try {
-      // إضافة العميل محلياً أولاً
       final box = await Hive.openBox<Customer>('customers');
-      final id = DateTime.now().millisecondsSinceEpoch;
-      customer.id = id;
-      customer.isSynced = false; // تعيين حالة المزامنة إلى false
-      await box.put(id.toString(), customer);
 
-      // محاولة المزامنة مع السيرفر إذا كان هناك اتصال
-      if (await ConnectivityService.isConnected()) {
-        try {
-          await _databaseService.addCustomer(customer);
-          customer.isSynced = true;
-          await box.put(customer.id.toString(), customer);
-        } catch (e) {
-          debugPrint('خطأ في حفظ العميل على السيرفر: $e');
-          // لا نقوم برمي الخطأ هنا لأن العميل تم حفظه محلياً
-        }
+      // التأكد من وجود جلسة صالحة
+      final session = Supabase.instance.client.auth.currentSession;
+      if (session == null || session.isExpired) {
+        throw Exception('لا توجد جلسة صالحة');
       }
 
-      // تحديث القائمة المحلية
-      _customers.add(customer);
+      // إضافة العميل عبر DatabaseService
+      final addedCustomer = await _databaseService.addCustomer(customer);
+      
+      // تحديث القوائم المحلية
+      _customers.add(addedCustomer);
       _applyFilters();
       notifyListeners();
+      
     } catch (e) {
       debugPrint('خطأ في إضافة العميل: $e');
       rethrow;
@@ -202,15 +168,113 @@ class CustomersProvider extends ChangeNotifier {
   }
 
   Future<void> updateCustomer(Customer customer) async {
-    final index = _customers.indexWhere((c) => c.id == customer.id);
-    if (index != -1) {
-      _customers[index] = customer;
-      notifyListeners();
-      try {
-        await _databaseService.updateCustomer(customer);
-      } catch (e) {
-        debugPrint('خطأ في تحديث العميل: $e');
+    try {
+      final box = await Hive.openBox<Customer>('customers');
+      
+      // إنشاء نسخة جديدة من العميل
+      final updatedCustomer = Customer(
+        id: customer.id,
+        name: customer.name,
+        phone: customer.phone,
+        address: customer.address,
+        notes: customer.notes,
+        color: customer.color,
+        balance: customer.balance,
+        createdAt: customer.createdAt,
+        updatedAt: DateTime.now(),
+        userId: customer.userId,
+        isDeleted: customer.isDeleted,
+        deletedAt: customer.deletedAt,
+        localId: customer.localId,
+        isSynced: customer.isSynced,
+      );
+
+      // محاولة المزامنة مع السيرفر إذا كان هناك اتصال
+      if (await ConnectivityService.isConnected()) {
+        try {
+          final userId = Supabase.instance.client.auth.currentUser?.id;
+          if (userId != null) {
+            final data = {
+              'name': updatedCustomer.name,
+              'phone': updatedCustomer.phone,
+              'address': updatedCustomer.address,
+              'notes': updatedCustomer.notes,
+              'color': updatedCustomer.color,
+              'balance': updatedCustomer.balance,
+              'user_id': userId,
+              'created_at': updatedCustomer.createdAt.toIso8601String(),
+              'updated_at': updatedCustomer.updatedAt.toIso8601String(),
+              'is_deleted': updatedCustomer.isDeleted,
+              'deleted_at': updatedCustomer.deletedAt?.toIso8601String(),
+              'local_id': updatedCustomer.localId?.toString(),
+            };
+
+            if (updatedCustomer.isSynced) {
+              // إذا كان العميل متزامناً، نقوم بالتحديث
+              await Supabase.instance.client
+                  .from('customers')
+                  .update(data)
+                  .eq('id', updatedCustomer.id.toString());
+            } else {
+              // إذا لم يكن متزامناً، نقوم بالإضافة
+              final response = await Supabase.instance.client
+                  .from('customers')
+                  .insert(data)
+                  .select()
+                  .single();
+              
+              // تحديث المعرف من السيرفر
+              final serverId = response['id'];
+              if (serverId != null) {
+                // حذف العميل القديم
+                await box.delete(updatedCustomer.id.toString());
+                
+                // تحديث المعرف وحفظ العميل الجديد
+                updatedCustomer.id = int.parse(serverId.toString());
+                updatedCustomer.isSynced = true;
+              }
+            }
+          }
+        } catch (e) {
+          updatedCustomer.isSynced = false;
+          debugPrint('فشل في تحديث العميل في السيرفر: $e');
+        }
+      } else {
+        updatedCustomer.isSynced = false;
       }
+
+      // تحديث محلياً
+      await box.put(updatedCustomer.id.toString(), updatedCustomer);
+      
+      // تحديث القائمة المحلية
+      final index = _customers.indexWhere((c) => c.id == updatedCustomer.id);
+      if (index != -1) {
+        _customers[index] = updatedCustomer;
+        _applyFilters();
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('خطأ في تحديث العميل: $e');
+      rethrow;
+    }
+  }
+
+  // مزامنة العملاء غير المتزامنين
+  Future<void> syncCustomers() async {
+    try {
+      final box = await Hive.openBox<Customer>('customers');
+      final unsyncedCustomers = box.values.where((c) => !c.isSynced).toList();
+      
+      for (var customer in unsyncedCustomers) {
+        try {
+          await updateCustomer(customer);
+        } catch (e) {
+          debugPrint('خطأ في مزامنة العميل ${customer.name}: $e');
+        }
+      }
+      notifyListeners();
+    } catch (e) {
+      debugPrint('خطأ في مزامنة العملاء: $e');
     }
   }
 
@@ -345,45 +409,16 @@ class CustomersProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // إضافة عميل إلى قائمة المزامنة
-  Future<void> addToSyncQueue(Customer customer) async {
-    _syncQueue.add(customer);
-    await _saveCustomerLocally(customer);
-    notifyListeners();
-  }
-
-  // حفظ العميل محلياً
-  Future<void> _saveCustomerLocally(Customer customer) async {
-    try {
-      final db = await DatabaseService.getInstance();
-      await db.updateCustomer(customer);
-    } catch (e) {
-      print('خطأ في الحفظ المحلي: $e');
-      throw e;
-    }
-  }
-
-  // مزامنة العملاء عند توفر الاتصال
-  Future<void> syncCustomers() async {
-    if (_syncQueue.isEmpty) return;
-
-    try {
-      for (var customer in _syncQueue) {
-        await updateCustomer(customer.copyWith(isSynced: true));
-      }
-      _syncQueue.clear();
-      notifyListeners();
-    } catch (e) {
-      print('خطأ في المزامنة: $e');
-      throw e;
-    }
-  }
-
   // التحقق من وجود عملاء في انتظار المزامنة
-  bool get hasPendingSync => _syncQueue.isNotEmpty;
+  bool get hasPendingSync => _customers.any((customer) => !customer.isSynced);
 
   // الحصول على عدد العملاء في انتظار المزامنة
-  int get pendingSyncCount => _syncQueue.length;
+  int get pendingSyncCount =>
+      _customers.where((customer) => !customer.isSynced).length;
+
+  // الحصول على قائمة العملاء في انتظار المزامنة
+  List<Customer> get pendingSyncCustomers =>
+      _customers.where((customer) => !customer.isSynced).toList();
 
   Future<List<Customer>> getCustomers() async {
     try {

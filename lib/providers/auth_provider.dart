@@ -12,6 +12,7 @@ class AuthProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String get loadingMessage => _loadingMessage;
   bool get isAuthenticated => _isAuthenticated;
+  Map<String, dynamic>? get userProfile => _userProfile;
 
   User? get currentUser => _supabase.auth.currentUser;
 
@@ -95,8 +96,10 @@ class AuthProvider extends ChangeNotifier {
     required String email,
     required String password,
     required String name,
+    String? phone,
   }) async {
     _isLoading = true;
+    _loadingMessage = 'جاري إنشاء الحساب...';
     notifyListeners();
 
     try {
@@ -111,6 +114,7 @@ class AuthProvider extends ChangeNotifier {
       // تنظيف البيانات
       email = email.trim().toLowerCase();
       name = name.trim();
+      phone = phone?.trim();
 
       // التحقق من صحة البيانات
       if (name.isEmpty) {
@@ -125,21 +129,41 @@ class AuthProvider extends ChangeNotifier {
         throw Exception('كلمة المرور يجب أن تكون 6 أحرف على الأقل');
       }
 
+      if (phone != null && phone.isNotEmpty) {
+        if (!RegExp(r'^\d{9,10}$').hasMatch(phone)) {
+          throw Exception('رقم الهاتف غير صالح');
+        }
+      }
+
+      debugPrint('جاري إنشاء الحساب في Supabase...');
+
+      // إنشاء الحساب في Supabase Auth
       final AuthResponse res = await _supabase.auth.signUp(
         email: email,
         password: password,
       );
 
-      if (res.user != null) {
-        // إنشاء ملف شخصي للمستخدم الجديد
-        await _supabase.from('profiles').insert({
-          'id': res.user!.id,
-          'name': name,
-          'email': email,
-        });
+      if (res.user == null) {
+        throw Exception('فشل في إنشاء الحساب: لم يتم إنشاء المستخدم');
       }
 
-      notifyListeners();
+      final userId = res.user!.id;
+      debugPrint('تم إنشاء الحساب بنجاح. معرف المستخدم: $userId');
+
+      // إنشاء الملف الشخصي في جدول profiles
+      await _supabase.from('profiles').insert({
+        'id': userId,
+        'name': name,
+        'phone': phone,
+        'created_at': DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+        'theme_mode': 'auto',
+        'language': 'ar',
+        'notifications_enabled': false,
+      });
+
+      debugPrint('تم إنشاء الملف الشخصي بنجاح');
+      _isAuthenticated = true;
     } catch (e) {
       debugPrint('خطأ في إنشاء الحساب: $e');
       String errorMessage;
@@ -148,13 +172,19 @@ class AuthProvider extends ChangeNotifier {
         errorMessage = 'لا يمكن الاتصال بالخادم، يرجى التحقق من اتصال الإنترنت';
       } else if (e.toString().contains('host lookup')) {
         errorMessage = 'مشكلة في الاتصال بالخادم، يرجى المحاولة لاحقاً';
-      } else if (e.toString().contains('already registered')) {
+      } else if (e.toString().contains('already registered') ||
+          e.toString().contains('email-already-in-use')) {
         errorMessage = 'البريد الإلكتروني مستخدم بالفعل';
       } else if (e.toString().contains('weak password')) {
         errorMessage = 'كلمة المرور ضعيفة جداً';
       } else {
-        errorMessage = 'حدث خطأ في إنشاء الحساب، يرجى المحاولة مرة أخرى';
+        errorMessage = e.toString().replaceAll('Exception: ', '');
       }
+
+      // محاولة تسجيل الخروج في حالة الفشل
+      try {
+        await _supabase.auth.signOut();
+      } catch (_) {}
 
       _isLoading = false;
       notifyListeners();

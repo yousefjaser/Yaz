@@ -2,53 +2,70 @@ import 'package:hive/hive.dart';
 
 part 'reminder.g.dart';
 
-@HiveType(typeId: 3)
-class Reminder {
+@HiveType(typeId: 2)
+class Reminder extends HiveObject {
   @HiveField(0)
   String? id;
 
   @HiveField(1)
-  final int customerId;
+  int? customerId;
 
   @HiveField(2)
-  final DateTime reminderDate;
+  DateTime reminderDate;
 
   @HiveField(3)
-  final String message;
+  String message;
 
   @HiveField(4)
   bool isCompleted;
 
+  @HiveField(5)
+  DateTime createdAt;
+
+  @HiveField(6)
+  bool isSynced;
+
   Reminder({
     this.id,
-    required this.customerId,
+    this.customerId,
     required this.reminderDate,
     required this.message,
     this.isCompleted = false,
-  });
+    DateTime? createdAt,
+    this.isSynced = false,
+  }) : this.createdAt = createdAt ?? DateTime.now();
 
-  Map<String, dynamic> toMap() {
+  Map<String, dynamic> toJson() {
     return {
-      'id': id,
+      'id': id?.toString(),
       'customer_id': customerId,
       'reminder_date': reminderDate.toIso8601String(),
       'message': message,
       'is_completed': isCompleted,
+      'created_at': createdAt.toIso8601String(),
+      'is_synced': isSynced,
     };
   }
 
-  factory Reminder.fromMap(Map<String, dynamic> map) {
+  Map<String, dynamic> toMap() => toJson();
+
+  factory Reminder.fromJson(Map<String, dynamic> json) {
     return Reminder(
-      id: map['id']?.toString(),
-      customerId: map['customer_id'],
-      reminderDate: DateTime.parse(map['reminder_date']),
-      message: map['message'],
-      isCompleted: map['is_completed'] ?? false,
+      id: json['id']?.toString(),
+      customerId: json['customer_id'] != null
+          ? int.parse(json['customer_id'].toString())
+          : null,
+      reminderDate: json['reminder_date'] != null
+          ? DateTime.parse(json['reminder_date'])
+          : DateTime.now(),
+      message: json['message'] ?? '',
+      isCompleted: json['is_completed'] ?? false,
+      createdAt: json['created_at'] != null
+          ? DateTime.parse(json['created_at'])
+          : DateTime.now(),
+      isSynced: json['is_synced'] ?? false,
     );
   }
 
-  Map<String, dynamic> toJson() => toMap();
-
-  factory Reminder.fromJson(Map<String, dynamic> json) =>
-      Reminder.fromMap(json);
+  factory Reminder.fromMap(Map<String, dynamic> map) => Reminder.fromJson(map);
 }

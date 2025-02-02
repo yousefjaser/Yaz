@@ -10,6 +10,8 @@ import 'package:flutter_icon_snackbar/flutter_icon_snackbar.dart';
 import 'package:yaz/services/reminder_service.dart';
 import 'package:yaz/models/reminder.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:provider/provider.dart';
+import 'package:yaz/providers/auth_provider.dart';
 
 class ScheduledReminder {
   final String id;
@@ -42,24 +44,206 @@ class PaymentDetailsScreen extends StatefulWidget {
 }
 
 class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
-  final WhatsAppService _whatsAppService = WhatsAppService();
-  List<ScheduledReminder> _scheduledReminders = [];
-  Timer? _timer;
-  Timer? _updateTimer;
   bool _isLoading = false;
-  final _reminderKey = 'reminders';
-  final TextEditingController _customMessageController =
-      TextEditingController();
   int _selectedMessageType = 0;
+  final TextEditingController _customMessageController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
+  List<ScheduledReminder> _scheduledReminders = [];
+  DateTime _selectedDate = DateTime.now();
+  TimeOfDay _selectedTime = TimeOfDay.now();
+  final _reminderKey = 'reminders';
+  Timer? _timer;
 
   final List<String> _variables = [
     'الاسم',
-    'الرقم',
+    'الهاتف',
     'المبلغ',
     'التاريخ',
     'النوع',
+    'المدفوع',
+    'الديون',
+    'الرصيد',
+    'التواصل',
+    'الشركة',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadScheduledReminders();
+    _startTimer();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _customMessageController.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  Future<void> _sendWhatsAppMessage() async {
+    try {
+      // التحقق من وجود نص للرسالة
+      String message;
+      if (_selectedMessageType == 4 && _customMessageController.text.isEmpty) {
+        if (mounted) {
+          showIconSnackBar(
+            context: context,
+            icon: Icons.error,
+            color: Colors.red,
+            label: 'الرجاء كتابة نص الرسالة أولاً',
+          );
+        }
+        return;
+      }
+
+      message = _replaceVariables(_getMessageTemplate(_selectedMessageType));
+
+      setState(() {
+        _isLoading = true;
+      });
+
+      final whatsapp = WhatsAppService();
+      final (success, error) = await whatsapp.sendMessage(
+        phoneNumber: widget.customer.phone,
+        message: message,
+      );
+
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+
+        if (success) {
+          showIconSnackBar(
+            context: context,
+            icon: Icons.check_circle,
+            color: Colors.green,
+            label: 'تم إرسال الرسالة بنجاح',
+          );
+        } else {
+          showIconSnackBar(
+            context: context,
+            icon: Icons.error,
+            color: Colors.red,
+            label: error,
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        showIconSnackBar(
+          context: context,
+          icon: Icons.error,
+          color: Colors.red,
+          label: 'حدث خطأ في إرسال الرسالة',
+        );
+      }
+    }
+  }
+
+  String _getMessageTemplate(int type) {
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    final userProfile = auth.userProfile;
+    final businessName = userProfile?['business_name'] as String? ?? 'شركتنا';
+    final contactPhone = userProfile?['phone'] as String? ?? '';
+
+    switch (type) {
+      case 0:
+        return '''مرحبا @الاسم
+نود إعلامك بموعد استحقاق دين بقيمة @المبلغ في @التاريخ
+للتواصل: @التواصل
+مع تحيات @الشركة
+نشكر تعاونكم معنا''';
+      case 1:
+        return '''مرحبا @الاسم
+هذا تذكير بموعد استحقاق دين بقيمة @المبلغ في @التاريخ
+للتواصل: @التواصل
+مع تحيات @الشركة
+نشكر تعاونكم معنا''';
+      case 2:
+        return '''عزيزي @الاسم
+نود إعلامكم بأنه تم استلام @النوع بقيمة @المبلغ في @التاريخ
+للتواصل: @التواصل
+مع تحيات @الشركة
+شكراً لكم''';
+      case 3:
+        // ترتيب الدفعات حسب التاريخ من الأحدث للأقدم
+        final sortedPayments = [...widget.customer.payments ?? []];
+        sortedPayments.sort((a, b) => b.date.compareTo(a.date));
+
+        // بناء قائمة الدفعات
+        final paymentsDetails = sortedPayments.map((payment) {
+          final type = payment.amount >= 0 ? 'دفعة' : 'دين';
+          final amount = '${payment.amount.abs()} ₪';
+          final date = _formatDate(payment.date);
+          final note = payment.notes?.isNotEmpty == true ? ' - ${payment.notes}' : '';
+          return '• $date: $type $amount$note';
+        }).join('\n');
+
+        return '''*كشف حساب*
+العميل: @الاسم
+رقم الهاتف: @الهاتف
+تاريخ الكشف: @التاريخ
+----------------
+إجمالي المدفوع: @المدفوع ₪
+إجمالي الديون: @الديون ₪
+الرصيد الحالي: @الرصيد ₪
+----------------
+*سجل المعاملات:*
+$paymentsDetails
+----------------
+للتواصل: @التواصل
+مع تحيات @الشركة''';
+      case 4: // تخصيص
+        final text = _customMessageController.text;
+        if (text.isEmpty) {
+          return 'اكتب رسالتك هنا...\nالمتغيرات المتاحة:\n@الاسم - اسم العميل\n@الهاتف - رقم الهاتف\n@المبلغ - المبلغ\n@التاريخ - التاريخ\n@النوع - نوع المعاملة\n@المدفوع - إجمالي المدفوعات\n@الديون - إجمالي الديون\n@الرصيد - الرصيد الحالي\n@التواصل - رقم التواصل\n@الشركة - اسم الشركة';
+        }
+        return text;
+      default:
+        return '';
+    }
+  }
+
+  String _replaceVariables(String text) {
+    final amount = '${widget.payment.amount.abs()} ₪';
+    final date = _formatDate(widget.payment.date);
+    final paymentType = widget.payment.amount >= 0 ? 'دفعة' : 'دين';
+
+    // حساب إجماليات كشف الحساب
+    var totalPaid = 0.0;
+    var totalDebt = 0.0;
+    for (var payment in widget.customer.payments ?? []) {
+      if (payment.amount > 0) {
+        totalPaid += payment.amount;
+      } else {
+        totalDebt += payment.amount.abs();
+      }
+    }
+
+    // الحصول على معلومات المستخدم
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    final userProfile = auth.userProfile;
+    final businessName = userProfile?['business_name'] as String? ?? 'شركتنا';
+    final contactPhone = userProfile?['phone'] as String? ?? '';
+
+    return text
+        .replaceAll('@الاسم', widget.customer.name)
+        .replaceAll('@الهاتف', widget.customer.phone)
+        .replaceAll('@المبلغ', amount)
+        .replaceAll('@التاريخ', date)
+        .replaceAll('@النوع', paymentType)
+        .replaceAll('@المدفوع', totalPaid.toStringAsFixed(2))
+        .replaceAll('@الديون', totalDebt.toStringAsFixed(2))
+        .replaceAll('@الرصيد', widget.customer.balance.toStringAsFixed(2))
+        .replaceAll('@التواصل', contactPhone)
+        .replaceAll('@الشركة', businessName);
+  }
 
   void showIconSnackBar({
     required BuildContext context,
@@ -82,74 +266,57 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
     );
   }
 
-  @override
-  void initState() {
-    super.initState();
-    _loadScheduledReminders();
-    _startTimer();
-    _startUpdateTimer();
-    _focusNode.addListener(() {
-      if (!_focusNode.hasFocus) {
-        // _removeOverlay();
-      }
-    });
-  }
+  void _showVariablesList(BuildContext context, TextEditingController controller) {
+    final cursorPosition = controller.selection.baseOffset;
+    final text = controller.text;
+    final textBeforeCursor = text.substring(0, cursorPosition);
 
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _updateTimer?.cancel();
-    _customMessageController.dispose();
-    _focusNode.dispose();
-    // _removeOverlay();
-    super.dispose();
-  }
-
-  void _showVariablesList(
-      BuildContext context, TextEditingController controller) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        contentPadding: const EdgeInsets.symmetric(vertical: 8),
-        content: SizedBox(
+      builder: (context) => Dialog(
+        child: Container(
           width: double.minPositive,
-          child: ListView.separated(
-            shrinkWrap: true,
-            itemCount: _variables.length,
-            separatorBuilder: (context, index) => const Divider(height: 1),
-            itemBuilder: (context, index) {
-              final variable = _variables[index];
-              return ListTile(
-                dense: true,
-                onTap: () {
-                  final text = controller.text;
-                  final selection = controller.selection;
-                  final beforeCursor = text.substring(0, selection.baseOffset);
-                  final afterCursor = text.substring(selection.baseOffset);
-                  final lastAtIndex = beforeCursor.lastIndexOf('@');
-                  if (lastAtIndex != -1) {
-                    final newText = beforeCursor.substring(0, lastAtIndex) +
-                        '@$variable' +
-                        afterCursor;
-                    controller.text = newText;
-                    controller.selection = TextSelection.fromPosition(
-                      TextPosition(offset: lastAtIndex + variable.length + 1),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Text(
+                  'اختر متغير',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              const Divider(height: 1),
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.4,
+                ),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: _variables.length,
+                  separatorBuilder: (context, index) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final variable = _variables[index];
+                    return ListTile(
+                      dense: true,
+                      title: Text('@$variable'),
+                      subtitle: Text(_getVariableDescription(variable)),
+                      onTap: () {
+                        final newText = textBeforeCursor + variable + text.substring(cursorPosition);
+                        controller.value = TextEditingValue(
+                          text: newText,
+                          selection: TextSelection.collapsed(
+                            offset: cursorPosition + variable.length,
+                          ),
+                        );
+                        Navigator.pop(context);
+                      },
                     );
-                  }
-                  Navigator.of(context).pop();
-                },
-                title: Text(
-                  '@$variable',
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
+                  },
                 ),
-                subtitle: Text(
-                  _getVariableDescription(variable),
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              );
-            },
+              ),
+            ],
           ),
         ),
       ),
@@ -159,15 +326,35 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
   String _getVariableDescription(String variable) {
     switch (variable) {
       case 'الاسم':
-        return 'اسم العميل';
-      case 'الرقم':
-        return 'رقم هاتف العميل';
+        return widget.customer.name;
+      case 'الهاتف':
+        return widget.customer.phone;
       case 'المبلغ':
-        return 'قيمة المبلغ مع العملة';
+        return '${widget.payment.amount.abs()} ₪';
       case 'التاريخ':
-        return 'تاريخ الاستحقاق';
+        return _formatDate(widget.payment.date);
       case 'النوع':
-        return 'نوع المعاملة (دفعة/دين)';
+        return widget.payment.amount >= 0 ? 'دفعة' : 'دين';
+      case 'المدفوع':
+        var total = 0.0;
+        for (var p in widget.customer.payments ?? []) {
+          if (p.amount > 0) total += p.amount;
+        }
+        return '$total ₪';
+      case 'الديون':
+        var total = 0.0;
+        for (var p in widget.customer.payments ?? []) {
+          if (p.amount < 0) total += p.amount.abs();
+        }
+        return '$total ₪';
+      case 'الرصيد':
+        return '${widget.customer.balance} ₪';
+      case 'التواصل':
+        final auth = Provider.of<AuthProvider>(context, listen: false);
+        return auth.userProfile?['phone'] as String? ?? '';
+      case 'الشركة':
+        final auth = Provider.of<AuthProvider>(context, listen: false);
+        return auth.userProfile?['business_name'] as String? ?? 'شركتنا';
       default:
         return '';
     }
@@ -175,80 +362,64 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
 
   void _startTimer() {
     _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 30), (timer) async {
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
-
-      bool needsSave = false;
-      for (int i = 0; i < _scheduledReminders.length; i++) {
-        var reminder = _scheduledReminders[i];
-        if (!reminder.isSent &&
-            reminder.scheduleDate.isBefore(DateTime.now())) {
-          try {
-            final success = await _whatsAppService.schedulePaymentReminder(
-              phoneNumber: widget.customer.phone,
-              customerName: widget.customer.name,
-              amount: widget.payment.amount,
-              dueDate: widget.payment.date,
-              scheduleDate: reminder.scheduleDate,
-              customMessage: reminder.customMessage,
-            );
-
-            if (success) {
-              // تحديث حالة التذكير في Supabase
-              final reminderService = await ReminderService.getInstance();
-              await reminderService.markReminderAsCompleted(reminder.id);
-            }
-
-            if (mounted) {
-              setState(() {
-                _scheduledReminders[i] = ScheduledReminder(
-                  id: reminder.id,
-                  scheduleDate: reminder.scheduleDate,
-                  isSent: true,
-                  hasError: !success,
-                  customMessage: reminder.customMessage,
-                );
-              });
-              needsSave = true;
-
-              showIconSnackBar(
-                context: context,
-                icon: success ? Icons.check : Icons.error,
-                color: success ? Colors.green : Colors.red,
-                label:
-                    success ? 'تم إرسال التذكير بنجاح' : 'فشل في إرسال التذكير',
-              );
-            }
-          } catch (e) {
-            debugPrint('خطأ في إرسال التذكير: $e');
-            if (mounted) {
-              setState(() {
-                _scheduledReminders[i] = ScheduledReminder(
-                  id: reminder.id,
-                  scheduleDate: reminder.scheduleDate,
-                  isSent: true,
-                  hasError: true,
-                  customMessage: reminder.customMessage,
-                );
-              });
-              needsSave = true;
-            }
-          }
-        }
-      }
-
-      if (needsSave) {
-        await _saveReminders();
-      }
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      _loadScheduledReminders();
     });
   }
 
+  Widget _buildMessagePreview() {
+    if (_customMessageController.text.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Card(
+      margin: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.secondaryContainer,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+            ),
+            child: Row(
+              children: [
+                Image.asset('assets/images/whatsapp.png', width: 22, height: 22,),
+                const SizedBox(width: 8),
+                Text(
+                  'معاينة الرسالة',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSecondaryContainer,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Theme.of(context).brightness == Brightness.dark
+                  ? Colors.grey[850]
+                  : Theme.of(context)
+                      .colorScheme
+                      .primaryContainer
+                      .withValues(alpha: (0.3 * 255).round().toDouble()),
+              borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
+            ),
+            child: Text(
+              _replaceVariables(_customMessageController.text),
+              style: const TextStyle(height: 1.5),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _startUpdateTimer() {
-    _updateTimer?.cancel();
-    _updateTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+    Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
         setState(() {
           // تحديث الواجهة فقط
@@ -313,7 +484,7 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
       final reminder = Reminder(
         customerId: widget.customer.id!,
         reminderDate: scheduleDate,
-        message: _selectedMessageType == 3
+        message: _selectedMessageType == 4
             ? _customMessageController.text
             : _getMessageTemplate(_selectedMessageType),
       );
@@ -330,7 +501,7 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
           isSent: false,
           hasError: false,
           customMessage:
-              _selectedMessageType == 3 ? _customMessageController.text : null,
+              _selectedMessageType == 4 ? _customMessageController.text : null,
         ));
         _scheduledReminders
             .sort((a, b) => a.scheduleDate.compareTo(b.scheduleDate));
@@ -413,253 +584,6 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
     } else {
       return 'متبقي $seconds ثانية';
     }
-  }
-
-  String _replaceVariables(String text) {
-    final amount = '${widget.payment.amount.abs()} ₪';
-    final date = _formatDate(widget.payment.date);
-    final paymentType = widget.payment.amount >= 0 ? 'دفعة' : 'دين';
-
-    return text
-        .replaceAll('@الاسم', widget.customer.name)
-        .replaceAll('@الرقم', widget.customer.phone)
-        .replaceAll('@المبلغ', amount)
-        .replaceAll('@التاريخ', date)
-        .replaceAll('@النوع', paymentType);
-  }
-
-  String _getMessageTemplate(int type) {
-    final amount = '${widget.payment.amount.abs()} ₪';
-    final date = _formatDate(widget.payment.date);
-    final paymentType = widget.payment.amount >= 0 ? 'دفعة' : 'دين';
-
-    switch (type) {
-      case 0:
-        return 'السلام عليكم ${widget.customer.name}،\nنود تذكيركم بموعد استحقاق $paymentType بقيمة $amount في تاريخ $date\nشكراً لتعاونكم';
-      case 1:
-        return 'مرحباً ${widget.customer.name}،\nهذا تذكير بموعد استحقاق $paymentType بمبلغ $amount في $date\nنقدر تعاونكم معنا';
-      case 2:
-        return 'عزيزي ${widget.customer.name}،\nنود إعلامكم باستحقاق $paymentType بقيمة $amount في تاريخ $date\nشكراً لكم';
-      case 3:
-        final text = _customMessageController.text;
-        if (text.isEmpty) {
-          return 'اكتب رسالتك هنا...\nالمتغيرات المتاحة:\n@الاسم - اسم العميل\n@الرقم - رقم العميل\n@المبلغ - المبلغ\n@التاريخ - التاريخ\n@النوع - نوع المعاملة';
-        }
-        return _replaceVariables(text);
-      default:
-        return '';
-    }
-  }
-
-  Widget _buildMessagePreview() {
-    return Card(
-      margin: const EdgeInsets.all(16),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'اختر نموذج الرسالة',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                Icon(
-                  Icons.message_rounded,
-                  color: Theme.of(context).colorScheme.secondary,
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              height: 180,
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    for (int i = 0; i < 3; i++)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 12),
-                        child: InkWell(
-                          onTap: () {
-                            setState(() {
-                              _selectedMessageType = i;
-                            });
-                          },
-                          child: Container(
-                            width: 200,
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: _selectedMessageType == i
-                                  ? Theme.of(context)
-                                      .colorScheme
-                                      .primaryContainer
-                                  : Theme.of(context).colorScheme.surface,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: _selectedMessageType == i
-                                    ? Theme.of(context).colorScheme.primary
-                                    : Theme.of(context)
-                                        .colorScheme
-                                        .outline
-                                        .withOpacity(0.2),
-                              ),
-                            ),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'نموذج ${i + 1}',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .titleMedium
-                                      ?.copyWith(
-                                        color: _selectedMessageType == i
-                                            ? Theme.of(context)
-                                                .colorScheme
-                                                .primary
-                                            : Theme.of(context)
-                                                .colorScheme
-                                                .onSurface,
-                                      ),
-                                ),
-                                const SizedBox(height: 8),
-                                Expanded(
-                                  child: Text(
-                                    _getMessageTemplate(i),
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodySmall
-                                        ?.copyWith(
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSurface
-                                              .withOpacity(0.8),
-                                        ),
-                                    maxLines: 6,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    // مربع الرسالة المخصصة
-                    Padding(
-                      padding: const EdgeInsets.only(left: 12),
-                      child: InkWell(
-                        onTap: () {
-                          setState(() {
-                            _selectedMessageType = 3;
-                          });
-                        },
-                        child: Container(
-                          width: 140,
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: _selectedMessageType == 3
-                                ? Theme.of(context).colorScheme.primaryContainer
-                                : Theme.of(context).colorScheme.surface,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: _selectedMessageType == 3
-                                  ? Theme.of(context).colorScheme.primary
-                                  : Theme.of(context)
-                                      .colorScheme
-                                      .outline
-                                      .withOpacity(0.2),
-                            ),
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.edit_note_rounded,
-                                size: 32,
-                                color: _selectedMessageType == 3
-                                    ? Theme.of(context).colorScheme.primary
-                                    : Theme.of(context).colorScheme.onSurface,
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'تخصيص',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleMedium
-                                    ?.copyWith(
-                                      color: _selectedMessageType == 3
-                                          ? Theme.of(context)
-                                              .colorScheme
-                                              .primary
-                                          : Theme.of(context)
-                                              .colorScheme
-                                              .onSurface,
-                                    ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            if (_selectedMessageType == 3) ...[
-              const SizedBox(height: 16),
-              TextField(
-                controller: _customMessageController,
-                focusNode: _focusNode,
-                maxLines: 4,
-                onChanged: (value) {
-                  setState(() {});
-                  if (value.endsWith('@')) {
-                    Future.delayed(const Duration(milliseconds: 100), () {
-                      _showVariablesList(context, _customMessageController);
-                    });
-                  }
-                },
-                decoration: InputDecoration(
-                  hintText:
-                      'اكتب رسالتك المخصصة هنا...\nمثال: مرحباً @الاسم لديك @النوع بقيمة @المبلغ',
-                  helperText: 'اكتب @ لإظهار قائمة المتغيرات المتاحة',
-                  helperMaxLines: 2,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  filled: true,
-                  fillColor: Theme.of(context).colorScheme.surface,
-                ),
-              ),
-              if (_customMessageController.text.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  'معاينة الرسالة:',
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-                const SizedBox(height: 4),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .primaryContainer
-                        .withOpacity(0.3),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(_replaceVariables(_customMessageController.text)),
-                ),
-              ],
-            ],
-          ],
-        ),
-      ),
-    );
   }
 
   @override
@@ -885,7 +809,214 @@ class _PaymentDetailsScreenState extends State<PaymentDetailsScreen> {
                     ),
                   ),
                   SliverToBoxAdapter(
-                    child: _buildMessagePreview(),
+                    child: Card(
+                      margin: const EdgeInsets.all(16),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'اختر نموذج الرسالة',
+                                  style: Theme.of(context).textTheme.titleLarge,
+                                ),
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.message_rounded,
+                                      color: Theme.of(context).colorScheme.secondary,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    ElevatedButton.icon(
+                                      onPressed: _isLoading ? null : _sendWhatsAppMessage,
+                                      icon: _isLoading
+                                          ? const SizedBox(
+                                              width: 20,
+                                              height: 20,
+                                              child: CircularProgressIndicator(strokeWidth: 2),
+                                            )
+                                          : const Icon(Icons.send),
+                                      label: Text(_isLoading ? 'جاري الإرسال...' : 'إرسال'),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            SizedBox(
+                              height: 180,
+                              child: SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                child: Row(
+                                  children: [
+                                    for (int i = 0; i < 4; i++)
+                                      Padding(
+                                        padding: const EdgeInsets.only(left: 12),
+                                        child: InkWell(
+                                          onTap: () {
+                                            setState(() {
+                                              _selectedMessageType = i;
+                                            });
+                                          },
+                                          child: Container(
+                                            width: 200,
+                                            padding: const EdgeInsets.all(12),
+                                            decoration: BoxDecoration(
+                                              color: _selectedMessageType == i
+                                                  ? Theme.of(context)
+                                                      .colorScheme
+                                                      .primaryContainer
+                                                  : Theme.of(context).colorScheme.surface,
+                                              borderRadius: BorderRadius.circular(12),
+                                              border: Border.all(
+                                                color: _selectedMessageType == i
+                                                    ? Theme.of(context).colorScheme.primary
+                                                    : Theme.of(context)
+                                                        .colorScheme
+                                                        .outline
+                                                        .withOpacity(0.2),
+                                              ),
+                                            ),
+                                            child: Column(
+                                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  'نموذج ${i + 1}',
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .titleMedium
+                                                      ?.copyWith(
+                                                        color: _selectedMessageType == i
+                                                            ? Theme.of(context)
+                                                                .colorScheme
+                                                                .primary
+                                                            : Theme.of(context)
+                                                                .colorScheme
+                                                                .onSurface,
+                                                      ),
+                                                ),
+                                                const SizedBox(height: 8),
+                                                Expanded(
+                                                  child: Text(
+                                                    _getMessageTemplate(i),
+                                                    style: Theme.of(context)
+                                                        .textTheme
+                                                        .bodySmall
+                                                        ?.copyWith(
+                                                          color: Theme.of(context)
+                                                              .colorScheme
+                                                              .onSurface
+                                                              .withOpacity(0.8),
+                                                        ),
+                                                    maxLines: 6,
+                                                    overflow: TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    // مربع الرسالة المخصصة
+                                    Padding(
+                                      padding: const EdgeInsets.only(left: 12),
+                                      child: InkWell(
+                                        onTap: () {
+                                          setState(() {
+                                            _selectedMessageType = 4;
+                                          });
+                                        },
+                                        child: Container(
+                                          width: 140,
+                                          padding: const EdgeInsets.all(12),
+                                          decoration: BoxDecoration(
+                                            color: _selectedMessageType == 4
+                                                ? Theme.of(context).colorScheme.primaryContainer
+                                                : Theme.of(context).colorScheme.surface,
+                                            borderRadius: BorderRadius.circular(12),
+                                            border: Border.all(
+                                              color: _selectedMessageType == 4
+                                                  ? Theme.of(context).colorScheme.primary
+                                                  : Theme.of(context)
+                                                      .colorScheme
+                                                      .outline
+                                                      .withOpacity(0.2),
+                                            ),
+                                          ),
+                                          child: Column(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: [
+                                              Icon(
+                                                Icons.edit_note_rounded,
+                                                size: 32,
+                                                color: _selectedMessageType == 4
+                                                    ? Theme.of(context).colorScheme.primary
+                                                    : Theme.of(context).colorScheme.onSurface,
+                                              ),
+                                              const SizedBox(height: 8),
+                                              Text(
+                                                'تخصيص',
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .titleMedium
+                                                    ?.copyWith(
+                                                      color: _selectedMessageType == 4
+                                                          ? Theme.of(context)
+                                                              .colorScheme
+                                                              .primary
+                                                          : Theme.of(context)
+                                                              .colorScheme
+                                                              .onSurface,
+                                                    ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            if (_selectedMessageType == 4) ...[
+                              const SizedBox(height: 16),
+                              TextField(
+                                controller: _customMessageController,
+                                focusNode: _focusNode,
+                                maxLines: 4,
+                                textDirection: TextDirection.rtl,
+                                onChanged: (value) {
+                                  setState(() {});
+                                  if (value.endsWith('@')) {
+                                    _showVariablesList(context, _customMessageController);
+                                  }
+                                },
+                                decoration: InputDecoration(
+                                  hintText: 'اكتب رسالتك هنا...',
+                                  helperText: 'اكتب @ لإظهار قائمة المتغيرات المتاحة',
+                                  helperMaxLines: 2,
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  filled: true,
+                                  fillColor: Theme.of(context).brightness == Brightness.dark
+                                      ? Colors.grey[850]
+                                      : Theme.of(context)
+                                          .colorScheme
+                                          .surface
+                                          .withValues(alpha: (0.5 * 255).round().toDouble()),
+                                ),
+                              ),
+                              _buildMessagePreview(),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                   SliverToBoxAdapter(
                     child: Padding(

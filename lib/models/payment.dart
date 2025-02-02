@@ -4,8 +4,8 @@ import 'package:meta/meta.dart';
 
 part 'payment.g.dart';
 
-@HiveType(typeId: 2)
-class Payment {
+@HiveType(typeId: 1)
+class Payment extends HiveObject {
   @HiveField(0)
   int? id;
 
@@ -59,17 +59,18 @@ class Payment {
     this.notes,
     this.reminderDate,
     this.reminderSent = false,
-    this.createdAt,
-    this.updatedAt,
+    DateTime? createdAt,
+    DateTime? updatedAt,
     this.isDeleted = false,
     this.deletedAt,
     this.title,
     this.reminderSentAt,
     this.isSynced = false,
     this.userId,
-  });
+  })  : this.createdAt = createdAt ?? DateTime.now(),
+        this.updatedAt = updatedAt ?? DateTime.now();
 
-  Map<String, dynamic> toMap() {
+  Map<String, dynamic> toJson() {
     return {
       'id': id,
       'customer_id': customerId,
@@ -78,8 +79,10 @@ class Payment {
       'notes': notes,
       'reminder_date': reminderDate?.toIso8601String(),
       'reminder_sent': reminderSent,
-      'created_at': createdAt?.toIso8601String(),
-      'updated_at': updatedAt?.toIso8601String(),
+      'created_at':
+          createdAt?.toIso8601String() ?? DateTime.now().toIso8601String(),
+      'updated_at':
+          updatedAt?.toIso8601String() ?? DateTime.now().toIso8601String(),
       'is_deleted': isDeleted,
       'deleted_at': deletedAt?.toIso8601String(),
       'title': title,
@@ -89,36 +92,44 @@ class Payment {
     };
   }
 
-  factory Payment.fromMap(Map<String, dynamic> map) {
+  Map<String, dynamic> toMap() => toJson();
+
+  factory Payment.fromJson(Map<String, dynamic> json) {
     return Payment(
-      id: map['id'],
-      customerId: map['customer_id'],
-      amount: map['amount']?.toDouble() ?? 0.0,
-      date: DateTime.parse(map['date']),
-      notes: map['notes'],
-      reminderDate: map['reminder_date'] != null
-          ? DateTime.parse(map['reminder_date'])
+      id: json['id'] != null ? int.parse(json['id'].toString()) : null,
+      customerId: json['customer_id'] != null
+          ? int.parse(json['customer_id'].toString())
+          : 0,
+      amount: json['amount'] != null
+          ? double.parse(json['amount'].toString())
+          : 0.0,
+      date:
+          json['date'] != null ? DateTime.parse(json['date']) : DateTime.now(),
+      notes: json['notes'],
+      reminderDate: json['reminder_date'] != null
+          ? DateTime.parse(json['reminder_date'])
           : null,
-      reminderSent: map['reminder_sent'] ?? false,
-      createdAt:
-          map['created_at'] != null ? DateTime.parse(map['created_at']) : null,
-      updatedAt:
-          map['updated_at'] != null ? DateTime.parse(map['updated_at']) : null,
-      isDeleted: map['is_deleted'] ?? false,
-      deletedAt:
-          map['deleted_at'] != null ? DateTime.parse(map['deleted_at']) : null,
-      title: map['title'],
-      reminderSentAt: map['reminder_sent_at'] != null
-          ? DateTime.parse(map['reminder_sent_at'])
+      reminderSent: json['reminder_sent'] ?? false,
+      createdAt: json['created_at'] != null
+          ? DateTime.parse(json['created_at'])
           : null,
-      isSynced: map['is_synced'] ?? false,
-      userId: map['user_id'],
+      updatedAt: json['updated_at'] != null
+          ? DateTime.parse(json['updated_at'])
+          : null,
+      isDeleted: json['is_deleted'] ?? false,
+      deletedAt: json['deleted_at'] != null
+          ? DateTime.parse(json['deleted_at'])
+          : null,
+      title: json['title'],
+      reminderSentAt: json['reminder_sent_at'] != null
+          ? DateTime.parse(json['reminder_sent_at'])
+          : null,
+      isSynced: json['is_synced'] ?? false,
+      userId: json['user_id'],
     );
   }
 
-  Map<String, dynamic> toJson() => toMap();
-
-  factory Payment.fromJson(Map<String, dynamic> json) => Payment.fromMap(json);
+  factory Payment.fromMap(Map<String, dynamic> map) => Payment.fromJson(map);
 
   Payment copyWith({
     int? id,

@@ -4,12 +4,13 @@ import 'package:provider/provider.dart';
 import 'package:yaz/providers/auth_provider.dart';
 import 'package:yaz/providers/customers_provider.dart';
 import 'package:yaz/widgets/bottom_nav.dart';
-import 'package:yaz/widgets/customer_list_widget.dart';
+import 'package:yaz/screens/home.dart';
 import 'package:yaz/widgets/drawer_widget.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:glassmorphism/glassmorphism.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({Key? key}) : super(key: key);
@@ -49,10 +50,15 @@ class _ProfileScreenState extends State<ProfileScreen>
     _selectedCountryCode = '+970';
     _loadUserData();
     _loadUserStats();
+    _loadSettings();
   }
 
   Future<void> _loadUserStats() async {
+    if (!mounted) return;
+
     try {
+      setState(() => _isLoading = true);
+
       final customersProvider =
           Provider.of<CustomersProvider>(context, listen: false);
       final customers = await customersProvider.getCustomers();
@@ -62,24 +68,81 @@ class _ProfileScreenState extends State<ProfileScreen>
       int totalPayments = 0;
 
       for (var customer in customers) {
+        if (!mounted) return;
+
         if (customer.balance < 0) {
           totalDebts += customer.balance.abs();
         } else {
           totalCredits += customer.balance;
         }
-        // يمكن إضافة المزيد من الإحصائيات هنا
+
+        // حساب عدد الدفعات من خلال قائمة الدفعات في العميل
+        totalPayments += customer.payments.length;
       }
 
-      if (mounted) {
-        setState(() {
-          _userStats['totalCustomers'] = customers.length;
-          _userStats['totalDebts'] = totalDebts;
-          _userStats['totalCredits'] = totalCredits;
-          _userStats['totalPayments'] = totalPayments;
-        });
-      }
+      if (!mounted) return;
+
+      setState(() {
+        _userStats['totalCustomers'] = customers.length;
+        _userStats['totalDebts'] = totalDebts;
+        _userStats['totalCredits'] = totalCredits;
+        _userStats['totalPayments'] = totalPayments;
+        _isLoading = false;
+      });
     } catch (e) {
+      if (!mounted) return;
+
+      setState(() => _isLoading = false);
       debugPrint('خطأ في تحميل الإحصائيات: $e');
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('خطأ في تحميل الإحصائيات: $e')),
+      );
+    }
+  }
+
+  Future<void> _saveSettings() async {
+    if (!mounted) return;
+
+    try {
+      setState(() => _isLoading = true);
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('isDarkMode', _isDarkMode);
+      await prefs.setBool('notificationsEnabled', _notificationsEnabled);
+      await prefs.setString('selectedLanguage', _selectedLanguage);
+      await prefs.setString('selectedThemeMode', _selectedThemeMode);
+
+      if (!mounted) return;
+
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم حفظ الإعدادات بنجاح')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('خطأ في حفظ الإعدادات: $e')),
+      );
+    }
+  }
+
+  Future<void> _loadSettings() async {
+    if (!mounted) return;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      setState(() {
+        _isDarkMode = prefs.getBool('isDarkMode') ?? false;
+        _notificationsEnabled = prefs.getBool('notificationsEnabled') ?? true;
+        _selectedLanguage = prefs.getString('selectedLanguage') ?? 'العربية';
+        _selectedThemeMode = prefs.getString('selectedThemeMode') ?? 'تلقائي';
+      });
+    } catch (e) {
+      debugPrint('خطأ في تحميل الإعدادات: $e');
     }
   }
 
@@ -695,14 +758,10 @@ class _ProfileScreenState extends State<ProfileScreen>
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       decoration: BoxDecoration(
-        color: isDark
-            ? Colors.grey[850]
-            : Theme.of(context).cardColor.withOpacity(0.1),
+        color: isDark ? Colors.grey[850] : Theme.of(context).cardColor.withOpacity(0.1),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isDark
-              ? Colors.grey[800]!
-              : Theme.of(context).dividerColor.withOpacity(0.1),
+          color: isDark ? Colors.grey[800]! : Theme.of(context).dividerColor.withOpacity(0.1),
         ),
       ),
       child: TextFormField(
@@ -713,13 +772,13 @@ class _ProfileScreenState extends State<ProfileScreen>
         ),
         decoration: InputDecoration(
           labelText: label,
+          hintText: label,
           labelStyle: TextStyle(
             color: isDark ? Colors.grey[400] : null,
           ),
           prefixIcon: Icon(icon, color: Theme.of(context).primaryColor),
           border: InputBorder.none,
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         ),
         validator: validator,
       ),
@@ -730,14 +789,10 @@ class _ProfileScreenState extends State<ProfileScreen>
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       decoration: BoxDecoration(
-        color: isDark
-            ? Colors.grey[850]
-            : Theme.of(context).cardColor.withOpacity(0.1),
+        color: isDark ? Colors.grey[850] : Theme.of(context).cardColor.withOpacity(0.1),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isDark
-              ? Colors.grey[800]!
-              : Theme.of(context).dividerColor.withOpacity(0.1),
+          color: isDark ? Colors.grey[800]! : Theme.of(context).dividerColor.withOpacity(0.1),
         ),
       ),
       child: Row(
@@ -746,9 +801,7 @@ class _ProfileScreenState extends State<ProfileScreen>
             decoration: BoxDecoration(
               border: Border(
                 right: BorderSide(
-                  color: isDark
-                      ? Colors.grey[800]!
-                      : Theme.of(context).dividerColor.withOpacity(0.1),
+                  color: isDark ? Colors.grey[800]! : Theme.of(context).dividerColor.withOpacity(0.1),
                 ),
               ),
             ),
@@ -767,9 +820,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                         child: Text(
                           '${country['name']}',
                           style: TextStyle(
-                            color: isDark
-                                ? Colors.white
-                                : Theme.of(context).primaryColor,
+                            color: isDark ? Colors.white : Theme.of(context).primaryColor,
                           ),
                         ),
                       ),
@@ -906,7 +957,9 @@ class _ProfileScreenState extends State<ProfileScreen>
     {'code': '+20', 'name': 'مصر 🇪🇬'},
   ];
 
-  void _loadUserData() async {
+  Future<void> _loadUserData() async {
+    if (!mounted) return;
+
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final user = authProvider.currentUser;
     if (user != null) {
@@ -935,6 +988,7 @@ class _ProfileScreenState extends State<ProfileScreen>
           });
         }
       } catch (e) {
+        debugPrint('خطأ في تحميل بيانات المستخدم: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('خطأ في تحميل البيانات: $e')),

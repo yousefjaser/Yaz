@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:yaz/screens/profile_screen.dart';
-import 'package:yaz/widgets/customer_list_widget.dart';
+import 'package:yaz/screens/home.dart';
 import 'package:provider/provider.dart';
 import 'package:yaz/providers/customers_provider.dart';
 import 'dart:ui';
@@ -19,7 +19,8 @@ class BottomNav extends StatefulWidget {
   State<BottomNav> createState() => _BottomNavState();
 }
 
-class _BottomNavState extends State<BottomNav> with SingleTickerProviderStateMixin {
+class _BottomNavState extends State<BottomNav>
+    with SingleTickerProviderStateMixin {
   late AnimationController _controller;
 
   @override
@@ -45,7 +46,7 @@ class _BottomNavState extends State<BottomNav> with SingleTickerProviderStateMix
   Widget build(BuildContext context) {
     final customers = context.watch<CustomersProvider>().customers;
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(30),
       child: BackdropFilter(
@@ -54,14 +55,14 @@ class _BottomNavState extends State<BottomNav> with SingleTickerProviderStateMix
           height: 60,
           margin: const EdgeInsets.symmetric(horizontal: 8),
           decoration: BoxDecoration(
-            color: isDarkMode 
-              ? Colors.black.withOpacity(0.4)
-              : Colors.white.withOpacity(0.4),
+            color: isDarkMode
+                ? Colors.black.withOpacity(0.4)
+                : Colors.white.withOpacity(0.4),
             borderRadius: BorderRadius.circular(30),
             border: Border.all(
-              color: isDarkMode 
-                ? Colors.white.withOpacity(0.1)
-                : Colors.black.withOpacity(0.1),
+              color: isDarkMode
+                  ? Colors.white.withOpacity(0.1)
+                  : Colors.black.withOpacity(0.1),
               width: 0.5,
             ),
             boxShadow: [
@@ -123,7 +124,9 @@ class _BottomNavState extends State<BottomNav> with SingleTickerProviderStateMix
         height: 40,
         decoration: BoxDecoration(
           color: isSelected
-              ? (isDarkMode ? Colors.white.withOpacity(0.1) : Theme.of(context).primaryColor.withOpacity(0.1))
+              ? (isDarkMode
+                  ? Colors.white.withOpacity(0.1)
+                  : Theme.of(context).primaryColor.withOpacity(0.1))
               : Colors.transparent,
           borderRadius: BorderRadius.circular(20),
         ),

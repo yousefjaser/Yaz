@@ -49,19 +49,23 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
     super.initState();
     _initDb();
     _scrollController.addListener(_onScroll);
-  }
-
-  Future<void> _initDb() async {
-    _db = await DatabaseService.getInstance();
+    // تحميل الدفعات مباشرة عند فتح الصفحة
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadPayments();
+    });
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    // إزالة التحميل من didChangeDependencies لتجنب التحميل المزدوج
     if (!_isInitialized) {
-      _loadPayments();
       _isInitialized = true;
     }
+  }
+
+  Future<void> _initDb() async {
+    _db = await DatabaseService.getInstance();
   }
 
   Future<void> _checkConnectivity() async {
@@ -76,6 +80,8 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
   }
 
   Future<void> _loadPayments() async {
+    if (!mounted) return;
+
     setState(() {
       _isLoading = true;
       _error = '';
@@ -85,33 +91,50 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
       final db = await DatabaseService.getInstance();
       final payments = await db.getCustomerPayments(widget.customer.id!);
 
-      if (mounted) {
-        setState(() {
-          _payments = payments;
-          _isLoading = false;
-        });
-      }
+      if (!mounted) return;
+
+      setState(() {
+        _payments = payments.where((p) => !p.isDeleted).toList();
+        _isLoading = false;
+      });
+
+      _updateBalance();
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _isLoading = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ في جلب الدفعات: $e')),
-        );
-      }
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _isLoading = false;
+      });
     }
   }
 
   void _updateBalance() {
-    if (_payments.isEmpty) return;
-    final newBalance =
-        _payments.fold(0.0, (sum, payment) => sum + payment.amount);
+    if (!mounted || _payments.isEmpty) return;
+
+    final newBalance = _calculateTotalAmount();
     if (widget.customer.balance != newBalance) {
-      widget.customer.balance = newBalance;
+      setState(() {
+        widget.customer.balance = newBalance;
+      });
+
       context.read<CustomersProvider>().updateCustomer(widget.customer);
     }
+  }
+
+  double _calculateTotalAmount() {
+    return _payments.fold(0.0, (sum, payment) => sum + payment.amount);
+  }
+
+  double _calculateTotalPaid() {
+    return _payments
+        .where((p) => p.amount > 0)
+        .fold(0.0, (sum, p) => sum + p.amount);
+  }
+
+  double _calculateTotalDebt() {
+    return _payments
+        .where((p) => p.amount < 0)
+        .fold(0.0, (sum, p) => sum + p.amount);
   }
 
   Future<void> _onPaymentTap(Payment payment) async {
@@ -175,7 +198,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
         body: Column(
           children: [
             Container(
-              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
                 color: Theme.of(context).primaryColor.withOpacity(0.1),
                 border: Border(
@@ -213,15 +236,19 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
                       ),
                     ),
                   ),
-                  SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) {
-                        final payment = _payments[index];
-                        return _buildPaymentItem(payment);
-                      },
-                      childCount: _payments.length,
-                    ),
-                  ),
+                  _isLoading
+                      ? const SliverFillRemaining(
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      : SliverList(
+                          delegate: SliverChildBuilderDelegate(
+                            (context, index) {
+                              final payment = _payments[index];
+                              return _buildPaymentItem(payment);
+                            },
+                            childCount: _payments.length,
+                          ),
+                        ),
                 ],
               ),
             ),
@@ -758,7 +785,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
 
               try {
                 final whatsapp = WhatsAppService();
-                final success = await whatsapp.sendMessage(
+                final (success, errorMessage) = await whatsapp.sendMessage(
                   phoneNumber: widget.customer.phone,
                   message: messageController.text.trim(),
                 );
@@ -769,7 +796,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
                   );
                 } else {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('فشل في إرسال الرسالة')),
+                    SnackBar(content: Text(errorMessage ?? 'فشل في إرسال الرسالة')),
                   );
                 }
               } catch (e) {
@@ -861,18 +888,6 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
     }
   }
 
-  double _calculateTotalDebt() {
-    return _payments
-        .where((p) => p.amount < 0)
-        .fold(0.0, (sum, p) => sum + p.amount.abs());
-  }
-
-  double _calculateTotalPaid() {
-    return _payments
-        .where((p) => p.amount > 0)
-        .fold(0.0, (sum, p) => sum + p.amount);
-  }
-
   String _formatDate(DateTime date) {
     return intl.DateFormat('yyyy/MM/dd').format(date);
   }
@@ -900,23 +915,44 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
 
   Future<void> _deletePayment(Payment payment) async {
     try {
-      await _db.movePaymentToTrash(payment);
+      // تحديث حالة الحذف
+      payment.isDeleted = true;
+      payment.deletedAt = DateTime.now();
+      payment.isSynced = false;
 
-      setState(() {
-        _payments.removeWhere((p) => p.id == payment.id);
-        _updateBalance();
-      });
+      // حفظ التغييرات محلياً
+      await _db.updatePayment(payment);
 
       if (!mounted) return;
-      context.read<CustomersProvider>().hidePayment(payment);
+
+      setState(() {
+        _payments.remove(payment);
+      });
+
+      _updateBalance();
+
+      // تحديث حالة المزامنة للعميل
+      widget.customer.isSynced = false;
+      await _db.updateCustomer(widget.customer);
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تم نقل الدفعة إلى سلة المحذوفات')),
       );
+
+      // محاولة المزامنة مع السيرفر إذا كان هناك اتصال
+      final connectivityResult = await Connectivity().checkConnectivity();
+      if (connectivityResult != ConnectivityResult.none) {
+        try {
+          await _db.syncPayment(payment);
+          await _db.syncCustomer(widget.customer);
+        } catch (e) {
+          debugPrint('خطأ في المزامنة: $e');
+        }
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('حدث خطأ في حذف الدفعة')),
+        SnackBar(content: Text('خطأ في حذف الدفعة: $e')),
       );
     }
   }

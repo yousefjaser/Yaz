@@ -1,310 +1,211 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'package:yaz/providers/customers_provider.dart';
+import 'package:yaz/models/customer.dart';
+import 'package:yaz/models/payment.dart';
+import 'package:yaz/services/database_service.dart';
 import 'package:intl/intl.dart' as intl;
 
 class TrashScreen extends StatefulWidget {
-  const TrashScreen({super.key});
+  const TrashScreen({Key? key}) : super(key: key);
 
   @override
   State<TrashScreen> createState() => _TrashScreenState();
 }
 
 class _TrashScreenState extends State<TrashScreen> {
-  final Set<int> _selectedCustomers = {};
-  final Set<int> _selectedPayments = {};
+  late DatabaseService _db;
+  List<Customer> _deletedCustomers = [];
+  List<Payment> _deletedPayments = [];
+  bool _isLoading = true;
+  String _error = '';
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<CustomersProvider>().loadDeletedPayments();
-    });
+    _initDb();
   }
 
-  Future<void> _confirmPermanentDelete(BuildContext context) async {
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
-    final navigator = Navigator.of(context);
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('تأكيد الحذف النهائي'),
-        content: const Text('هل أنت متأكد من حذف العناصر المحددة نهائياً؟'),
-        actions: [
-          TextButton(
-            onPressed: () => navigator.pop(false),
-            child: const Text('إلغاء'),
-          ),
-          TextButton(
-            onPressed: () => navigator.pop(true),
-            child: const Text('حذف نهائي'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true && mounted) {
-      try {
-        final provider = Provider.of<CustomersProvider>(context, listen: false);
-        if (_selectedCustomers.isNotEmpty) {
-          await provider
-              .permanentlyDeleteCustomers(_selectedCustomers.toList());
-        }
-        if (_selectedPayments.isNotEmpty) {
-          await provider.permanentlyDeletePayments(_selectedPayments.toList());
-        }
-        if (!mounted) return;
-        setState(() {
-          _selectedCustomers.clear();
-          _selectedPayments.clear();
-        });
-        scaffoldMessenger.showSnackBar(
-          const SnackBar(content: Text('تم الحذف النهائي بنجاح')),
-        );
-      } catch (e) {
-        if (!mounted) return;
-        scaffoldMessenger.showSnackBar(
-          SnackBar(content: Text('خطأ في الحذف النهائي: $e')),
-        );
-      }
+  Future<void> _initDb() async {
+    try {
+      _db = await DatabaseService.getInstance();
+      await _loadDeletedItems();
+    } catch (e) {
+      setState(() {
+        _error = e.toString();
+        _isLoading = false;
+      });
     }
   }
 
-  Widget _buildDeletedCustomers() {
-    return Consumer<CustomersProvider>(
-      builder: (context, provider, _) {
-        final deletedCustomers = provider.deletedCustomers;
+  Future<void> _loadDeletedItems() async {
+    if (!mounted) return;
 
-        return Column(
-          children: [
-            if (deletedCustomers.isNotEmpty)
-              CheckboxListTile(
-                title: const Text('تحديد الكل'),
-                value: _selectedCustomers.length == deletedCustomers.length,
-                onChanged: (bool? value) {
-                  setState(() {
-                    if (value == true) {
-                      _selectedCustomers.addAll(
-                        deletedCustomers.map((c) => c.id!),
-                      );
-                    } else {
-                      _selectedCustomers.clear();
-                    }
-                  });
-                },
-              ),
-            Expanded(
-              child: ListView.builder(
-                itemCount: deletedCustomers.length,
-                itemBuilder: (context, index) {
-                  final customer = deletedCustomers[index];
-                  return Card(
-                    margin:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    child: CheckboxListTile(
-                      value: _selectedCustomers.contains(customer.id),
-                      onChanged: (bool? value) {
-                        setState(() {
-                          if (value == true) {
-                            _selectedCustomers.add(customer.id!);
-                          } else {
-                            _selectedCustomers.remove(customer.id);
-                          }
-                        });
-                      },
-                      title: Row(
-                        children: [
-                          CircleAvatar(
-                            backgroundColor: customer.balance < 0
-                                ? Colors.red
-                                : Colors.green,
-                            child: const Icon(
-                              Icons.person,
-                              color: Colors.white,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  customer.name,
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold),
-                                ),
-                                Text(
-                                  'الرصيد: ${customer.balance.abs().toStringAsFixed(2)} ₪',
-                                  style: TextStyle(
-                                    color: customer.balance < 0
-                                        ? Colors.red
-                                        : Colors.green,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      subtitle: Text(customer.phone),
-                      secondary: IconButton(
-                        icon: const Icon(Icons.restore),
-                        onPressed: () {
-                          provider.restoreCustomer(customer);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('تم استعادة العميل')),
-                          );
-                        },
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        );
-      },
-    );
+    setState(() {
+      _isLoading = true;
+      _error = '';
+    });
+
+    try {
+      final customers = await _db.getCustomers();
+      final allPayments = await _db.getAllPayments();
+
+      if (!mounted) return;
+
+      setState(() {
+        _deletedCustomers = customers.where((c) => c.isDeleted).toList();
+        _deletedPayments = allPayments.where((p) => p.isDeleted).toList();
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _isLoading = false;
+      });
+    }
   }
 
-  Widget _buildDeletedPayments() {
-    return Consumer<CustomersProvider>(
-      builder: (context, provider, _) {
-        final deletedPayments = provider.deletedPayments;
+  Future<void> _restoreCustomer(Customer customer) async {
+    try {
+      customer.isDeleted = false;
+      customer.deletedAt = null;
+      await _db.updateCustomer(customer);
 
-        return Column(
-          children: [
-            if (deletedPayments.isNotEmpty)
-              CheckboxListTile(
-                title: const Text('تحديد الكل'),
-                value: _selectedPayments.length == deletedPayments.length,
-                onChanged: (bool? value) {
-                  setState(() {
-                    if (value == true) {
-                      _selectedPayments.addAll(
-                        deletedPayments.map((p) => p.id!),
-                      );
-                    } else {
-                      _selectedPayments.clear();
-                    }
-                  });
-                },
-              ),
-            Expanded(
-              child: ListView.builder(
-                itemCount: deletedPayments.length,
-                itemBuilder: (context, index) {
-                  final payment = deletedPayments[index];
-                  return Card(
-                    margin:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    child: CheckboxListTile(
-                      value: _selectedPayments.contains(payment.id),
-                      onChanged: (bool? value) {
-                        setState(() {
-                          if (value == true) {
-                            _selectedPayments.add(payment.id!);
-                          } else {
-                            _selectedPayments.remove(payment.id);
-                          }
-                        });
-                      },
-                      title: Row(
-                        children: [
-                          CircleAvatar(
-                            backgroundColor:
-                                payment.amount < 0 ? Colors.red : Colors.green,
-                            child: Icon(
-                              payment.amount < 0
-                                  ? Icons.arrow_downward
-                                  : Icons.arrow_upward,
-                              color: Colors.white,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  payment.customerName ?? 'عميل غير معروف',
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold),
-                                ),
-                                Text(
-                                  '${payment.amount.abs().toStringAsFixed(2)} ₪',
-                                  style: TextStyle(
-                                    color: payment.amount < 0
-                                        ? Colors.red
-                                        : Colors.green,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      subtitle: Text(
-                        intl.DateFormat('yyyy/MM/dd').format(payment.date),
-                      ),
-                      secondary: IconButton(
-                        icon: const Icon(Icons.restore),
-                        onPressed: () {
-                          final scaffoldMessenger =
-                              ScaffoldMessenger.of(context);
-                          provider.restorePayment(payment).then((_) {
-                            scaffoldMessenger.showSnackBar(
-                              const SnackBar(
-                                  content: Text('تم استعادة الدفعة')),
-                            );
-                          }).catchError((e) {
-                            scaffoldMessenger.showSnackBar(
-                              SnackBar(
-                                  content: Text('خطأ في استعادة الدفعة: $e')),
-                            );
-                          });
-                        },
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        );
-      },
-    );
+      if (!mounted) return;
+
+      setState(() {
+        _deletedCustomers.remove(customer);
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم استعادة العميل بنجاح')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('خطأ في استعادة العميل: $e')),
+      );
+    }
+  }
+
+  Future<void> _restorePayment(Payment payment) async {
+    try {
+      payment.isDeleted = false;
+      payment.deletedAt = null;
+      await _db.updatePayment(payment);
+
+      if (!mounted) return;
+
+      setState(() {
+        _deletedPayments.remove(payment);
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم استعادة الدفعة بنجاح')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('خطأ في استعادة الدفعة: $e')),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
       length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('سلة المحذوفات'),
-          actions: [
-            if (_selectedCustomers.isNotEmpty || _selectedPayments.isNotEmpty)
-              IconButton(
-                icon: const Icon(Icons.delete_forever),
-                onPressed: () => _confirmPermanentDelete(context),
-              ),
-          ],
-          bottom: const TabBar(
-            tabs: [
-              Tab(text: 'العملاء'),
-              Tab(text: 'الدفعات'),
-            ],
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Scaffold(
+          appBar: AppBar(
+            title: const Text('سلة المحذوفات'),
+            bottom: const TabBar(
+              tabs: [
+                Tab(text: 'العملاء'),
+                Tab(text: 'الدفعات'),
+              ],
+            ),
           ),
-        ),
-        body: TabBarView(
-          children: [
-            _buildDeletedCustomers(),
-            _buildDeletedPayments(),
-          ],
+          body: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _error.isNotEmpty
+                  ? Center(child: Text('خطأ: $_error'))
+                  : TabBarView(
+                      children: [
+                        _buildCustomersList(),
+                        _buildPaymentsList(),
+                      ],
+                    ),
         ),
       ),
+    );
+  }
+
+  Widget _buildCustomersList() {
+    if (_deletedCustomers.isEmpty) {
+      return const Center(child: Text('لا يوجد عملاء محذوفين'));
+    }
+
+    return ListView.builder(
+      itemCount: _deletedCustomers.length,
+      itemBuilder: (context, index) {
+        final customer = _deletedCustomers[index];
+        return ListTile(
+          leading: CircleAvatar(
+            backgroundColor:
+                Color(int.parse(customer.color.replaceAll('#', '0xFF'))),
+            child: Text(
+              customer.name.characters.first,
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
+          title: Text(customer.name),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(customer.phone),
+              Text(
+                'الرصيد: ${customer.balance.toStringAsFixed(2)} ₪',
+                style: TextStyle(
+                  color: customer.balance < 0 ? Colors.red : Colors.green,
+                ),
+              ),
+            ],
+          ),
+          trailing: IconButton(
+            icon: const Icon(Icons.restore),
+            onPressed: () => _restoreCustomer(customer),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPaymentsList() {
+    if (_deletedPayments.isEmpty) {
+      return const Center(child: Text('لا يوجد دفعات محذوفة'));
+    }
+
+    return ListView.builder(
+      itemCount: _deletedPayments.length,
+      itemBuilder: (context, index) {
+        final payment = _deletedPayments[index];
+        return ListTile(
+          leading: CircleAvatar(
+            backgroundColor: payment.amount < 0 ? Colors.red : Colors.green,
+            child: Icon(
+              payment.amount < 0 ? Icons.arrow_downward : Icons.arrow_upward,
+              color: Colors.white,
+            ),
+          ),
+          title: Text('${payment.amount.abs().toStringAsFixed(2)} ₪'),
+          subtitle: Text(intl.DateFormat('yyyy/MM/dd').format(payment.date)),
+          trailing: IconButton(
+            icon: const Icon(Icons.restore),
+            onPressed: () => _restorePayment(payment),
+          ),
+        );
+      },
     );
   }
 }

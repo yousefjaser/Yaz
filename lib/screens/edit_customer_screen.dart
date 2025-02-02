@@ -332,49 +332,54 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
     );
   }
 
-  void _saveChanges() async {
-    if (_formKey.currentState?.validate() ?? false) {
-      try {
-        final updatedCustomer = widget.customer.copyWith(
-          name: _nameController.text,
-          phone: _phoneController.text,
-          address:
-              _addressController.text.isEmpty ? null : _addressController.text,
-          notes: _notesController.text.isEmpty ? null : _notesController.text,
-          color: _selectedColor,
-          isSynced: !_isOfflineMode, // تحديث حالة المزامنة
-        );
+  Future<void> _saveChanges() async {
+    if (!_formKey.currentState!.validate()) return;
 
-        final customersProvider = context.read<CustomersProvider>();
-        await customersProvider.updateCustomer(updatedCustomer);
+    final customersProvider =
+        Provider.of<CustomersProvider>(context, listen: false);
 
-        // إذا كان في وضع عدم الاتصال، قم بتخزين التغييرات محلياً
-        if (_isOfflineMode) {
-          await customersProvider.addToSyncQueue(updatedCustomer);
+    try {
+      final updatedCustomer = widget.customer.copyWith(
+        name: _nameController.text,
+        phone: _phoneController.text,
+        address: _addressController.text,
+        notes: _notesController.text,
+        color: _selectedColor,
+        isSynced: false, // تعيين حالة المزامنة إلى false
+      );
+
+      // حفظ التغييرات محلياً وتحديث الواجهة
+      await customersProvider.updateCustomer(updatedCustomer);
+
+      // محاولة المزامنة مع السيرفر إذا كان هناك اتصال
+      if (await customersProvider.isConnected()) {
+        try {
+          await customersProvider.syncCustomers();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('تم حفظ التغييرات ومزامنتها')),
+          );
+        } catch (e) {
+          debugPrint('خطأ في مزامنة التغييرات: $e');
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text(
-                  'تم حفظ التغييرات محلياً وسيتم مزامنتها عند توفر الاتصال'),
-              duration: Duration(seconds: 3),
+              content: Text('تم الحفظ محلياً، ستتم المزامنة عند توفر الاتصال'),
             ),
           );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('تم حفظ التغييرات بنجاح')),
-          );
         }
-
-        if (!mounted) return;
-        Navigator.pop(context, true);
-      } catch (e) {
+      } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(_isOfflineMode
-                ? 'حدث خطأ أثناء الحفظ المحلي: $e'
-                : 'حدث خطأ أثناء الحفظ: $e'),
+          const SnackBar(
+            content: Text('تم الحفظ محلياً، ستتم المزامنة عند توفر الاتصال'),
           ),
         );
       }
+
+      setState(() => _hasUnsavedChanges = false);
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('خطأ في حفظ التغييرات: $e')),
+      );
     }
   }
 }

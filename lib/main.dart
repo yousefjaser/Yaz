@@ -15,7 +15,7 @@ import 'package:yaz/services/database_service.dart';
 import 'package:yaz/services/whatsapp_service.dart';
 import 'package:yaz/widgets/add_customer_sheet.dart';
 import 'package:yaz/widgets/bottom_nav.dart';
-import 'package:yaz/widgets/customer_list_widget.dart';
+import 'package:yaz/screens/home.dart';
 import 'package:yaz/screens/trash_screen.dart';
 import 'package:yaz/screens/analytics_screen.dart';
 import 'package:workmanager/workmanager.dart';
@@ -115,7 +115,7 @@ void callbackDispatcher() {
 
           try {
             final whatsapp = WhatsAppService();
-            final success = await whatsapp.sendPaymentReminder(
+            final (success, error) = await whatsapp.sendPaymentReminder(
               phoneNumber: customer['phone'],
               customerName: customer['name'],
               amount: payment['amount'].abs(),
@@ -224,6 +224,10 @@ Future<void> main() async {
           ),
           ChangeNotifierProvider(
             create: (_) => AuthProvider(),
+          ),
+          ChangeNotifierProvider(
+            create: (_) => db,
+            lazy: false,
           ),
           ChangeNotifierProxyProvider<AuthProvider, CustomersProvider>(
             create: (_) => CustomersProvider(db),

@@ -9,6 +9,7 @@ import '../models/reminder.dart';
 import 'package:yaz/models/payment.dart';
 import 'package:yaz/models/customer.dart';
 import 'package:yaz/services/local_storage_service.dart';
+import 'package:uuid/uuid.dart';
 
 class ReminderService {
   static const String reminderTask = 'payment_reminder';
@@ -66,11 +67,19 @@ class ReminderService {
       debugPrint(
           'جدولة تذكير للدفعة: $paymentId في تاريخ: ${_formatDateTime(localReminderDate)}');
 
+      // الحصول على معلومات الدفعة والعميل
+      final payment = await database.getPaymentById(paymentId);
+      if (payment == null) {
+        throw Exception('لم يتم العثور على الدفعة');
+      }
+
       // إنشاء تذكير جديد في قاعدة البيانات
       final reminder = Reminder(
-        customerId: paymentId, // تأكد من أن هذا هو معرف العميل الصحيح
+        customerId: payment.customerId,
         reminderDate: localReminderDate,
-        message: 'تذكير بموعد الدفعة', // يمكنك تخصيص الرسالة حسب احتياجك
+        message: payment.notes?.isNotEmpty == true
+            ? payment.notes!
+            : 'تذكير بموعد الدفعة',
       );
 
       // حفظ التذكير في Supabase
@@ -160,8 +169,30 @@ class ReminderService {
 
   Future<void> createReminder(Reminder reminder) async {
     try {
-      await _supabase.from('reminders').insert(reminder.toJson());
+      // لا نقوم بتعيين معرف - سيقوم Supabase بإنشائه تلقائياً
+      final response = await _supabase
+          .from('reminders')
+          .insert({
+            'customer_id': reminder.customerId,
+            'reminder_date': reminder.reminderDate.toIso8601String(),
+            'message': reminder.message,
+            'is_completed': reminder.isCompleted,
+            'created_at': reminder.createdAt.toIso8601String(),
+            'is_synced': true,
+          })
+          .select()
+          .single();
+      
+      // تحديث المعرف من السيرفر
+      reminder.id = response['id'].toString();
+      reminder.isSynced = true;
+      
+      // حفظ التذكير في التخزين المحلي
+      await storage.insertReminder(reminder);
+      
+      debugPrint('تم إنشاء التذكير بنجاح مع المعرف: ${reminder.id}');
     } catch (e) {
+      debugPrint('خطأ في إنشاء التذكير: $e');
       throw Exception('فشل في إنشاء التذكير: $e');
     }
   }

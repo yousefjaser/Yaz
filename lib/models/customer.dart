@@ -9,16 +9,16 @@ class Customer extends HiveObject {
   int? id;
 
   @HiveField(1)
-  final String name;
+  String name;
 
   @HiveField(2)
-  final String phone;
+  String phone;
 
   @HiveField(3)
-  final String? address;
+  String? address;
 
   @HiveField(4)
-  final String? notes;
+  String? notes;
 
   @HiveField(5)
   String color;
@@ -44,8 +44,14 @@ class Customer extends HiveObject {
   @HiveField(12)
   String? userId;
 
+  @HiveField(13)
   bool isSynced;
+
+  @HiveField(14)
   bool isDeleted;
+
+  @HiveField(15)
+  String? localId;
 
   Customer({
     this.id,
@@ -63,11 +69,12 @@ class Customer extends HiveObject {
     this.userId,
     this.isSynced = false,
     this.isDeleted = false,
+    this.localId,
   })  : payments = payments ?? [],
         createdAt = createdAt ?? DateTime.now(),
         updatedAt = updatedAt ?? DateTime.now();
 
-  Map<String, dynamic> toMap() {
+  Map<String, dynamic> toJson() {
     return {
       'id': id,
       'name': name,
@@ -77,29 +84,51 @@ class Customer extends HiveObject {
       'color': color,
       'balance': balance,
       'last_payment_date': lastPaymentDate?.toIso8601String(),
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
+      'created_at':
+          createdAt?.toIso8601String() ?? DateTime.now().toIso8601String(),
+      'updated_at':
+          updatedAt?.toIso8601String() ?? DateTime.now().toIso8601String(),
       'deleted_at': deletedAt?.toIso8601String(),
+      'is_deleted': isDeleted,
+      'is_synced': isSynced,
       'user_id': userId,
+      'local_id': localId,
     };
   }
 
-  factory Customer.fromMap(Map<String, dynamic> map) {
+  Map<String, dynamic> toMap() => toJson();
+
+  factory Customer.fromJson(Map<String, dynamic> json) {
     return Customer(
-      id: map['id'],
-      name: map['name'] ?? '',
-      phone: map['phone'] ?? '',
-      balance: (map['balance'] ?? 0.0).toDouble(),
-      notes: map['notes'] ?? '',
-      createdAt: DateTime.parse(map['created_at']),
-      userId: map['user_id'],
-      color: map['color'] ?? '#FF0000',
-      address: map['address'] ?? '',
-      updatedAt:
-          map['updated_at'] != null ? DateTime.parse(map['updated_at']) : null,
-      isSynced: map['is_synced'] ?? true,
+      id: json['id'] != null ? int.parse(json['id'].toString()) : null,
+      name: json['name'] ?? '',
+      phone: json['phone'] ?? '',
+      address: json['address'],
+      notes: json['notes'],
+      color: json['color'] ?? '#000000',
+      balance: json['balance'] != null
+          ? double.parse(json['balance'].toString())
+          : 0.0,
+      lastPaymentDate: json['last_payment_date'] != null
+          ? DateTime.parse(json['last_payment_date'])
+          : null,
+      createdAt: json['created_at'] != null
+          ? DateTime.parse(json['created_at'])
+          : DateTime.now(),
+      updatedAt: json['updated_at'] != null
+          ? DateTime.parse(json['updated_at'])
+          : DateTime.now(),
+      deletedAt: json['deleted_at'] != null
+          ? DateTime.parse(json['deleted_at'])
+          : null,
+      isDeleted: json['is_deleted'] ?? false,
+      isSynced: json['is_synced'] ?? false,
+      userId: json['user_id'],
+      localId: json['local_id'],
     );
   }
+
+  factory Customer.fromMap(Map<String, dynamic> map) => Customer.fromJson(map);
 
   Customer copyWith({
     int? id,
@@ -117,6 +146,7 @@ class Customer extends HiveObject {
     String? userId,
     bool? isSynced,
     bool? isDeleted,
+    String? localId,
   }) {
     return Customer(
       id: id ?? this.id,
@@ -132,21 +162,9 @@ class Customer extends HiveObject {
       updatedAt: updatedAt ?? this.updatedAt,
       deletedAt: deletedAt ?? this.deletedAt,
       userId: userId ?? this.userId,
-    )
-      ..isSynced = isSynced ?? this.isSynced
-      ..isDeleted = isDeleted ?? this.isDeleted;
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'name': name,
-      'phone': phone,
-      'address': address,
-      'notes': notes,
-      'color': color,
-      'balance': balance,
-      'created_at': DateTime.now().toIso8601String(),
-      'updated_at': DateTime.now().toIso8601String(),
-    };
+      isSynced: isSynced ?? this.isSynced,
+      isDeleted: isDeleted ?? this.isDeleted,
+      localId: localId ?? this.localId,
+    );
   }
 }

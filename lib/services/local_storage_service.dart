@@ -180,7 +180,7 @@ class LocalStorageService {
   }
 
   // عمليات التذكيرات
-  static Future<int> insertReminder(Reminder reminder) async {
+  static Future<int> insertReminderStatic(Reminder reminder) async {
     final db = await database;
     return await db.insert('reminders', {
       'customer_id': reminder.customerId,
@@ -189,6 +189,15 @@ class LocalStorageService {
       'is_completed': reminder.isCompleted ? 1 : 0,
       'sync_status': 'pending'
     });
+  }
+
+  Future<void> insertReminder(Reminder reminder) async {
+    try {
+      await _remindersBox.put(reminder.id, reminder);
+    } catch (e) {
+      debugPrint('خطأ في حفظ التذكير محلياً: $e');
+      rethrow;
+    }
   }
 
   // مزامنة البيانات مع السيرفر
